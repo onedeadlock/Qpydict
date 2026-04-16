@@ -1,1 +1,3 @@
+![Top Languages](https://img.shields.io/github/languages/top/Qpydict/Qpydict) ![Python Version from PEP 621 TOML](https://img.shields.io/python/required-version-toml?tomlFilePath=https%3A%2F%2Fraw.githubusercontent.com%2FQpydict%2FQpydict%2Fmain%2Fpyproject.toml) ![GitHub Repo stars](https://img.shields.io/github/stars/Qpydict/Qpydict) ![GitHub Issues or Pull Requests](https://img.shields.io/github/issues-pr/Qpydict/Qpydict) ![GitHub forks](https://img.shields.io/github/forks/Qpydict/Qpydict) ![GitHub contributors](https://img.shields.io/github/contributors/Qpydict/Qpydict) ![build](https://img.shields.io/badge/build-failing-red) ![GitHub License](https://img.shields.io/github/license/Qpydict/Qpydict) 
+
 ![Qpydict](qpydict.svg)
