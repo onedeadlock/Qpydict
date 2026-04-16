@@ -1,0 +1,55 @@
+[build-system]
+ requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["./src"]
+include = ["*"]
+
+[tool.setuptools.package-data]
+Add = ["*.c"]
+
+[project]
+name            = "hello_world"
+version         = "1.0.0"
+description     = "A minimal CPython C-extension exposing an Adder class."
+readme          = "README.md"
+license         = { file = "LICENSE" }
+requires-python = ">=3.8"
+
+[project]
+name = "Qpydict"
+version = "0.0.0"
+authors = [{name = "Michael Saviour", email = "saviourme33@gmail.com"}]
+maintainers = [
+	    {
+		name = "Michael Saviour",
+		email = "saviourme33@gmail.com"
+	     }
+]
+description = "A Fast Python Dictionary"
+readme = {
+       file = "README.md",
+       content-type = "text/markdown"
+       }
+keywords = ["Qpydict", "dict", "pydict", "dictionary", "fast", "Map"]
+classifiers = [
+    "Development Status :: 0",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: C",
+    "Topic :: Python Dictionary :: Libraries",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["build"]
+
+[project.urls]
+Homepage      = "https://github.com/Qpydict/"
+Repository    = "https://github.com/Qpydict/Qpydict.git"
+Issues        = "https://github.com/Qpydict/Qpydict/issues"
+Documentation = "https://github.com/Qpydict/README.md"
