@@ -16,13 +16,13 @@
 typedef PyObject * QPyDict_PyObject;
 typedef Py_ssize_t QPy_ssize_t;
 static int QPydict_module_exec(QPyDict_PyObject module);
-QPyDict_PyObject version(void);
+static QPyDict_PyObject version(QPyDict_PyObject module);
 
 // Initialization
-static QPyDict_PyObject QPyDict_new(PyTypeObject *cls, QPyDict_PyObject args, QPyDict_PyObject kwds);
-static int QPyDict_init(QPyDict_PyObject selfobj, QPyDict_PyObject args, QPyDict_PyObject kwds);
+static QPyDict_PyObject QPyDict_new(PyTypeObject *clstype, QPyDict_PyObject args, QPyDict_PyObject kwds);
+static int QPyDict_init(QPyDict_PyObject cls, QPyDict_PyObject args, QPyDict_PyObject kwds);
 static void QPyDict_dealloc(QPyDict_PyObject cls);
-static int QPyDict_tranverse(QPyDict_PyObject selfobj, visitproc visit, void *arg);
+static int QPyDict_tranverse(QPyDict_PyObject cls, visitproc visit, void *arg);
 
 // Class Methods
 QPyDict_PyObject QPyDict_Clear(QPyDict_PyObject self);
@@ -34,17 +34,16 @@ static const char *QPyDict_docs[] = {
     ""
 };
 
-// QPyDict Object (instance) Type
+// QPyDict (Instance) Object
 typedef struct {
     PyObject_HEAD
     QPyDict_Cache  cache;
     QPyDict_Array  data;
     QPyDict_Policy policy;
     QPy_ssize_t    capacity;
-    QPy_ssize_t    gsz;
-    QPy_ssize_t    sz;
+    QPy_ssize_t    grpsize;
+    QPy_ssize_t    size;
     QPy_ssize_t    lf;
-    uint16_t       resz;
 } __attribute__((aligned(64))) QPyDictObject;
 
 static PyMemberDef QPyDict_attr[] = {
@@ -53,14 +52,14 @@ static PyMemberDef QPyDict_attr[] = {
 	.type   = QPy_T_SSIZE,
 	.offset = offsetof(QPyDictObject, capacity),
 	.flags  = Py_READONLY,
-	.doc    = PyDict_STR(QPyDict_doc[0])
+	.doc    = PyDoc_STR(QPyDict_docs[0])
     },
     {
 	.name   = "size",
 	.type   = QPy_T_SSIZE,
 	.offset = offsetof(QPyDictObject, size),
 	.flags  = Py_READONLY,
-	.doc    = PyDict_STR(QPyDict_doc[0])
+	.doc    = PyDoc_STR(QPyDict_docs[0])
     }
     {NULL}
 };

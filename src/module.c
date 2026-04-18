@@ -1,6 +1,6 @@
 #include "module.h"
 
-static QPyDict_PyObject version(QPyDict_PyObject QPy_UNUSED(self), QPyDict_PyObject QPy_UNUSED(arg))
+static QPyDict_PyObject version(QPyDict_PyObject QPy_UNUSED(module))
 {
     Py_INCREF(Py_None);
     return Py_None;
@@ -14,15 +14,15 @@ static int QPydict_module_exec(QPyDict_PyObject module)
     return -1;
 }
 
-Py_INITFUNC PyInit_QPyDict(void)
+Py_INITFUNC PyInit_QPydict(void)
 {
-    return PyModuleDef_Init(&QPyDict_module);
+    return PyModuleDef_Init(&QPydict_Module);
 }
 
-static QPyDict_PyObject QPyDict_new(PyTypeObject *cls, QPyDict_PyObject args, QPyDict_PyObject kwds)
+static QPyDict_PyObject QPyDict_new(PyTypeObject *clstype, QPyDict_PyObject QPy_UNUSED(args), QPyDict_PyObject QPy_UNUSED(kwds))
 {
     // Allocate memory for our object
-    return (QPyDict_PyObject)cls->tp_alloc(cls, 0);
+    return (QPyDict_PyObject)(cls->tp_alloc(clstype, 0));
 }
 
 static int QPyDict_init(QPyDict_PyObject cls, QPyDict_PyObject args, QPyDict_PyObject kwds)
