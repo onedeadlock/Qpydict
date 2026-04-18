@@ -1,3 +1,11 @@
+# Custom
+*~
+build*
+dist*
+*.egg-info
+test/shared*
+5est/build*
+
 # Prerequisites
 *.d
 

@@ -1,46 +1,36 @@
 [build-system]
- requires = ["setuptools"]
+ requires     = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-where = ["./src"]
+where   = ["src"]
 include = ["*"]
 
 [tool.setuptools.package-data]
-Add = ["*.c"]
+Add = ["src/*.c"]
 
 [project]
-name = "Qpydict"
-description = "A Fast Python Dictionary"
-version = "0.0.0"
+name            = "Qpydict"
+description     = "A Fast Python Dictionary"
+version         = "0.0.0"
 requires-python = ">=3.11"
-authors = [{name = "Michael Saviour", email = "saviourme33@gmail.com"}]
-maintainers = [
-	    {
-		name = "Michael Saviour",
-		email = "saviourme33@gmail.com"
-	     }
-]
-readme = {
-       file = "README.md",
-       content-type = "text/markdown"
-       }
-license  = { file = "LICENSE" }
-keywords = ["Qpydict", "dict", "pydict", "dictionary", "fast", "Map"]
-classifiers = [
+authors         = [{name = "Michael Saviour", email = "saviourme33@gmail.com"}]
+maintainers     = [{name = "Michael Saviour", email = "saviourme33@gmail.com"}]
+readme          = {file = "README.md", content-type = "text/markdown"}
+license         = "MIT"
+license-files   = ["LICEN[CS]E*", "AUTHORS.md"]
+keywords        = ["Qpydict", "dict", "pydict", "dictionary", "fast", "Map"]
+classifiers     = [
     "Development Status :: 0",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
+    "Programming Language :: Python :: Implementation :: CPython",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: C",
     "Topic :: Python Dictionary :: Libraries",
 ]
-dependencies = []
-
-[project.optional-dependencies]
-dev = ["build"]
+dependencies    = []
 
 [project.urls]
 Homepage      = "https://github.com/Qpydict/"

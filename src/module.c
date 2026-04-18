@@ -1,52 +1,58 @@
 #include "module.h"
 
-static QPyDict_PyObject version(QPyDict_PyObject QPy_UNUSED(module))
+static QPyDict_PyObject version(QPyDict_PyObject QPy_UNUSED(module), QPyDict_PyObject QPy_UNUSED(arg))
 {
     Py_INCREF(Py_None);
     return Py_None;
 }
 
-static int QPydict_module_exec(QPyDict_PyObject module)
+static int Qpydict_module_exec(QPyDict_PyObject module)
 {
-    if (PyType_FromModuleAndSpec(module, spec, NULL))
-	return 0;
+    PyTypeObject *cls = (PyTypeObject *)PyType_FromModuleAndSpec(module, &QPyDict_clsspec, NULL);
 
+    // Add class to the modules namespace (dict)
+    if (cls && !(PyModule_AddType(module, cls) < 0))
+	{
+	    Py_DECREF(cls);
+	    return 0;
+	}
+    Py_DECREF(cls);
     return -1;
 }
 
-Py_INITFUNC PyInit_QPydict(void)
+PyMODINIT_FUNC PyInit_Qpydict(void)
 {
-    return PyModuleDef_Init(&QPydict_Module);
+    return PyModuleDef_Init(&Qpydict_Module);
 }
 
-static QPyDict_PyObject QPyDict_new(PyTypeObject *clstype, QPyDict_PyObject QPy_UNUSED(args), QPyDict_PyObject QPy_UNUSED(kwds))
+static QPyDict_PyObject QPyDict_new(PyTypeObject *cls, QPyDict_PyObject QPy_UNUSED(args), QPyDict_PyObject QPy_UNUSED(kwds))
 {
     // Allocate memory for our object
-    return (QPyDict_PyObject)(cls->tp_alloc(clstype, 0));
+    return (QPyDict_PyObject)(cls->tp_alloc(cls, 0));
 }
 
-static int QPyDict_init(QPyDict_PyObject cls, QPyDict_PyObject args, QPyDict_PyObject kwds)
+static int QPyDict_init(QPyDict_PyObject _self, QPyDict_PyObject args, QPyDict_PyObject kwds)
 {
-    QPyDictObject *self = (QPyDictObject *)cls;
-
+    QPyDictObject * QPy_UNUSED(self) = (QPyDictObject *)_self;
     return 0;
 }
 
-static int QPyDict_tranverse(QPyDict_PyObject cls, visitproc QPy_UNUSED(visit), void * QPy_UNUSED(arg))
+static int QPyDict_traverse(QPyDict_PyObject _self, visitproc visit, void *arg)
 {
     // allow qpydict type to be tracked by GC (preventing cyclic references)
-    Py_VISIT(Py_TYPE(cls));
+    Py_VISIT(Py_TYPE(_self));
 
     return 0;
 }
 
-static void QPyDict_dealloc(QPyDict_PyObject cls)
+static void QPyDict_dealloc(QPyDict_PyObject _self)
 {
-    QPyDictObject *self = (QPyDictObject *)cls;
+    QPyDictObject *self = (QPyDictObject *)_self;
+    PyTypeObject  *cls  = Py_TYPE(self);
 
     // untrack from GC
-    PyObject_GC_UNTRACK(Py_TYPE(self));
-    Py_CLEAR(Py_TYPE(self));
+    PyObject_GC_UnTrack(cls);
+    Py_CLEAR(cls);
 
     /**
        TDDO
@@ -61,5 +67,5 @@ static void QPyDict_dealloc(QPyDict_PyObject cls)
     */
 
     // free class object
-    Py_TYPE(self)->tp_free(self);
+    cls->tp_free(self);
 }
