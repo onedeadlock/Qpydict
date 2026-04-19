@@ -1,6 +1,6 @@
 #include "module.h"
 
-#define QPy_STINNULL(functype) __attribute__((nonnull, always_inline)) static inline functype
+#define QPy_ST_INLNULL(functype) __attribute__((nonnull, always_inline)) static inline functype
 #define QPy_SETVAL(lv, rv)       ((lv) = (rv))
 #define QPy_RAISE_Err(type, msg) (PyErr_SetString(type, msg), QPy_Err)
 #define QPy_RAISE_BADARG(msg)    QPy_RAISE_Err(PyExc_TypeError, msg)
@@ -34,7 +34,7 @@ static int Qpydict_module_exec(QPyDict_PyObject module)
     return QPy_Err;
 }
 
-QPy_STINNULL(int) QPyDict_GET_COMMON_OBJECT_SIZE(QPyDict_PyObject arg, QPy_ssize_t *size, int op)
+QPy_ST_INLNULL(int) QPyDict_GET_COMMON_OBJECT_SIZE(QPyDict_PyObject arg, QPy_ssize_t *size, int op)
 {
     if (QPy_LONG_OR_SEQUENCE == op)
 	{
@@ -68,19 +68,36 @@ PyMODINIT_FUNC PyInit_Qpydict(void)
 
 static QPyDict_PyObject QPyDict_new(PyTypeObject *cls, QPyDict_PyObject QPy_UNUSED(args), QPyDict_PyObject QPy_UNUSED(kwds))
 {
-    // Allocate memory for our object
+    // Allocate memory for class
     return (QPyDict_PyObject)(cls->tp_alloc(cls, 0));
+}
+
+QPy_ST_INLNULL(int) QPyDict_CustomInit(QPyDictObject *self, QPy_ssize_t size, void *conf)
+{
+    // the check for overflow was intentional skipped in init (main) because in the future, initialization may be forced continue or the behaviour could be configurable, or not.
+    if (size < 0)
+	return QPy_RAISE_OVERFLOW("Integer Overflow:@call:internal:__init__");
+
+    // Set up the basic structure fields here
+
+    if (size != 0)
+	{
+	    // TODO
+	    // - allocate memory for the entries to be stored in the internal array, as well as in the cache array, and do other stuff
+
+	    return 1; // initialization steps is complete
+	}
+    return 0; // partial initialized object (a call to any insert functions does the rest)
 }
 
 static int QPyDict_init(QPyDict_PyObject _self, QPyDict_PyObject arg, QPyDict_PyObject kwargs)
 {
     QPyDictObject * QPy_UNUSED(self) = (QPyDictObject *)_self;
-    QPy_ssize_t QPy_UNUSED(as);
-    QPy_ssize_t QPy_UNUSED(ks);
-    QPy_ssize_t QPy_UNUSED(rs);
-    int QPy_UNUSED(type);
+    QPy_ssize_t QPy_UNUSED(as); // size of object in arg
+    QPy_ssize_t QPy_UNUSED(ks); // size of keyword args
+    int         QPy_UNUSED(type); // type returned by QPyDict_GET_COMMON_OBJECT_SIZE
 
-    rs = ks = as = type = 0;
+    ks = as = type = 0;
     if (NULL != arg)
 	{
 	    arg = PyTuple_GET_ITEM(arg, 0); 
@@ -98,22 +115,19 @@ static int QPyDict_init(QPyDict_PyObject _self, QPyDict_PyObject arg, QPyDict_Py
     if (NULL != kwargs && (QPyDict_GET_COMMON_OBJECT_SIZE(arg, &ks, QPy_MAP) < 0))
 	{
 	    Py_XDECREF(arg);
-	    return -1;
+	    return QPy_Err;
 	}
 
     // create dict of size argsize + kwsize
-    rs = argsize + kwsize;
-    if (rs < 0)
+    if (QPy_Err == QPyDict_CustomInit(self, as + ks, NULL))
 	{
 	    Py_XDECREF(arg);
-	    return QPy_RAISE_OVERFLOW("Integer Overflow (ssize_t)");
+	    return QPy_Err;
 	}
 
-    // TODO: create dict here
-    
     if (type && (type != QPy_LONG))
 	{
-	    // TODO: arg is an iterable/mapping type instance. for each pair of item in arg, add to our dict
+	    // TODO: arg is an iterable/mapping type instance. for each pair of item in arg, add to instance array
 	}
 
     Py_XDECREF(arg);
