@@ -96,7 +96,10 @@ static int QPyDict_init(QPyDict_PyObject _self, QPyDict_PyObject arg, QPyDict_Py
 	}
 		
     if (NULL != kwargs && (QPyDict_GET_COMMON_OBJECT_SIZE(arg, &ks, QPy_MAP) < 0))
-	return -1;
+	{
+	    Py_XDECREF(arg);
+	    return -1;
+	}
 
     // create dict of size argsize + kwsize
     rs = argsize + kwsize;
@@ -113,7 +116,7 @@ static int QPyDict_init(QPyDict_PyObject _self, QPyDict_PyObject arg, QPyDict_Py
 	    // TODO: arg is an iterable/mapping type instance. for each pair of item in arg, add to our dict
 	}
 
-	    Py_XDECREF(arg);
+    Py_XDECREF(arg);
     return 0;
 }
 
