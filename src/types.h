@@ -13,7 +13,7 @@
 #define QPy_T_SSIZE      Py_T_PYSSIZET
 #define QPy_ARRAY_SIZE   sizeof(QPyDict_Array_)
 #define QPy_CACHE_SIZE   sizeof(QPyDict_Cache_)
-#define QPy_DEFAULT_SIZE 0
+#define QPy_DEFAULT_SIZE 0 // TODO: set
 
 typedef PyObject * QPyDict_PyObject;
 typedef Py_ssize_t QPy_ssize_t;

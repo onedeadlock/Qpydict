@@ -74,20 +74,17 @@ static void QPyDict_aligned_free(void * QPy_UNUSED(ptr))
 
 QPy_PTR_INLINE(int) QPyDict_GetCommonObjectSize(QPyDict_PyObject arg, QPy_ssize_t *size, int op)
 {
-    QPy_ssize_t QPy_UNUSED(_size);
-
-    if ((op & QPy_LONG) && PyLong_Check(arg))
-	{
-	    _size = PyLong_AsSsize_t(arg);
-	    return _size < 0 ? QPy_Err : (QPy_SETVAL(*size, _size), QPy_LONG);
-	}
+    if ((op & QPy_MAP) && PyMapping_Check(arg))
+	return (QPy_SETVAL(*size, PyMapping_Size(arg)), QPy_MAP);
     if ((op & QPy_SEQUENCE) && PySequence_Check(arg))
 	return (QPy_SETVAL(*size, PySequence_Size(arg)), QPy_SEQUENCE);
     if ((op & QPy_ITER) && PyIter_Check(arg))
 	return (QPy_SETVAL(*size, QPy_DEFAULT_SIZE), QPy_ITER);
-    if ((op & QPy_MAP) && PyMapping_Check(arg))
-	return (QPy_SETVAL(*size, PyMapping_Size(arg)), QPy_MAP);
-		
+    if ((op & QPy_LONG) && PyLong_Check(arg))
+	{
+	    QPy_ssize_t _size = PyLong_AsSsize_t(arg);
+	    return _size < 0 ? QPy_Err : (QPy_SETVAL(*size, _size), QPy_LONG);
+	}
     return QPy_Err;
 }
 
@@ -132,16 +129,17 @@ QPy_INLINE(int) QPyDict_IterAsDict(QPyDictObject *self, QPyDict_PyObject iter)
     if (! PyIter_Check(iter))
 	return QPy_Err;
     item = key = value = err = 0;
-    while (PyIter_Next(iter, &item) > 0 && PyIter_Check(item))
+    while (PyIter_NextItem(iter, &item) > 0 && PyIter_Check(item))
 	{
 	    // get key and value from item
-	    err  = PyIter_Next(item, &key) < 1 || PyIter_Next(item, &value) < 1;
+	    err  = PyIter_NextItem(item, &key) < 1 || PyIter_Next(item, &value) < 1;
 	    // insert key and value into dict
 	    err || QPyDict_insert(self, key, value, &err);
 
 	    Py_DECREF(item); item = NULL;
 	    if (err)
 		break;
+	    key = value = NULL;
 	}
     if (NULL != item)
 	{
@@ -210,8 +208,7 @@ static int QPyDict_init(QPyDict_PyObject _self, QPyDict_PyObject arg, QPyDict_Py
     if (! (QPy_LONG & type))
 	{
 	    // entries from positional argument
-	    err = (type & QPy_SEQUENCE) && QPyDict_SeqAsDict(self, args, as);
-	    err = (type & QPy_ITER)     && QPyDict_IterAsDict(self, args, as);
+	    err = (type & (QPy_SEQUENCE|QPy_ITER)) && QPyDict_IterAsDict(self, args, as);
 	    err = (type & QPy_MAP)      && QPyDict_MapAsDict(self, args, as);
 	}
     // entries from keyword arguments
