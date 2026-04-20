@@ -22,7 +22,8 @@ QPyDict_PyObject QPyDict_SetItem(QPyDict_PyObject self, QPyDict_PyObject args, Q
 QPyDict_PyObject QPyDict_GetItem(QPyDict_PyObject self, QPyDict_PyObject args);
 
 // Class Internal Functions
-int QPyDict_insert(PyDictObject *self, QPyDict_PyObject key, QPyDict_PyObject value);
+int QPyDict_insert(PyDictObject *self, QPyDict_PyObject key, QPyDict_PyObject value, uintptr_t *exc);
+void QPyDict_ClearEntries(PyDictObject *self);
 
 static PyMemberDef QPyDict_attr[] = {
     {

@@ -9,10 +9,11 @@
 #include <stdint.h>
 #include <inttypes.h>
 
-#define QPy_UNUSED(x)  Py_UNUSED(x)
-#define QPy_T_SSIZE    Py_T_PYSSIZET
-#define QPy_ARRAY_SIZE sizeof(QPyDict_Array_)
-#define QPy_CACHE_SIZE sizeof(QPyDict_Cache_)
+#define QPy_UNUSED(x)    Py_UNUSED(x)
+#define QPy_T_SSIZE      Py_T_PYSSIZET
+#define QPy_ARRAY_SIZE   sizeof(QPyDict_Array_)
+#define QPy_CACHE_SIZE   sizeof(QPyDict_Cache_)
+#define QPy_DEFAULT_SIZE 0
 
 typedef PyObject * QPyDict_PyObject;
 typedef Py_ssize_t QPy_ssize_t;

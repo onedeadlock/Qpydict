@@ -15,11 +15,12 @@
 #define QPy_TMPCACHE(self)    NULL
 
 enum {
-    QPy_Err = -1,
-    QPy_LONG = 321,
-    QPy_LONG_OR_SEQUENCE,
-    QPy_SEQUENCE,
-    QPy_MAP
+    QPy_Err      = -1,
+    QPy_LONG     = 0x01,
+    QPy_SEQUENCE = 0x02,
+    QPy_MAP      = 0x04,
+    QPy_ITER     = 0x08,
+    QPy_ALL      = 0x0f
 };
 
 static QPyDict_PyObject version(QPyDict_PyObject QPy_UNUSED(module), QPyDict_PyObject QPy_UNUSED(arg))
@@ -73,30 +74,21 @@ static void QPyDict_aligned_free(void * QPy_UNUSED(ptr))
 
 QPy_PTR_INLINE(int) QPyDict_GetCommonObjectSize(QPyDict_PyObject arg, QPy_ssize_t *size, int op)
 {
-    if (QPy_LONG_OR_SEQUENCE == op)
+    QPy_ssize_t QPy_UNUSED(_size);
+
+    if ((op & QPy_LONG) && PyLong_Check(arg))
 	{
-	    QPy_ssize_t QPy_UNUSED(_size);
-
-	    if (PyLong_Check(arg))
-		{
-		    _size = PyLong_AsSsize_t(arg);
-		    return _size < 0 ? QPy_Err : (QPy_SETVAL(*size, _size), QPy_LONG);
-		}
-
-	    // TODO: sequence/iterable type/instance here
-	    if (0)
-		{
-		    return QPy_SEQ;
-		}
-	    return QPy_RAISE_BADARG("`arg` is not an integer or does not support the sequence/iterator protocol@call:internal:QPyDict_GetCommonObjectSize");
+	    _size = PyLong_AsSsize_t(arg);
+	    return _size < 0 ? QPy_Err : (QPy_SETVAL(*size, _size), QPy_LONG);
 	}
-
-    // size from MappingType object/instance (dict-like)
-    if ((QPy_MAP == op) && !PyMapping_Check(arg))
-	return QPy_RAISE_BADARG("`arg` does not suppprt the mapping protocol@call:internal:QPyDict_GetCommonObjectSize");
-
-    QPy_SETVAL(*size, PyMapping_Size(arg));
-    return QPy_MAP;
+    if ((op & QPy_SEQUENCE) && PySequence_Check(arg))
+	return (QPy_SETVAL(*size, PySequence_Size(arg)), QPy_SEQUENCE);
+    if ((op & QPy_ITER) && PyIter_Check(arg))
+	return (QPy_SETVAL(*size, QPy_DEFAULT_SIZE), QPy_ITER);
+    if ((op & QPy_MAP) && PyMapping_Check(arg))
+	return (QPy_SETVAL(*size, PyMapping_Size(arg)), QPy_MAP);
+		
+    return QPy_Err;
 }
 
 QPy_INLINE(void *) QPyDict_ClearObject(QPyDictObject *self)
@@ -135,7 +127,7 @@ QPy_PTR_INLINE(int) QPyDict_CustomInit(QPyDictObject *self, QPy_ssize_t size)
 QPy_INLINE(int) QPyDict_IterAsDict(QPyDictObject *self, QPyDict_PyObject iter)
 {
     QPyDict_PyObject item, key, value;
-    uint8_t err;
+    uintptr_t err;
 
     if (! PyIter_Check(iter))
 	return QPy_Err;
@@ -144,41 +136,38 @@ QPy_INLINE(int) QPyDict_IterAsDict(QPyDictObject *self, QPyDict_PyObject iter)
 	{
 	    // get key and value from item
 	    err  = PyIter_Next(item, &key) < 1 || PyIter_Next(item, &value) < 1;
-
 	    // insert key and value into dict
-	    err += err || QPyDict_insert(self, key, value) == QPy_Err;
-	    Py_DECREF(item);
+	    err || QPyDict_insert(self, key, value, &err);
+
+	    Py_DECREF(item); item = NULL;
 	    if (err)
 		break;
-	    item = NULL;
 	}
-
     if (NULL != item)
 	{
-	    // TODO: deep cleanup dict here
-	    switch (err) {
-	    case 1:
-		// invalid length
-		QPy_RAISE_Err(PyExc_ValueError, "");
-		break;
-	    case 2:
-		// insert error (we only expect a memory error from call to insert)
-		QPy_RAISE_Err(PyExc_MemoryError, "");
-		break;
-	    default:
-		QPy_RAISE_Err(PyExc_TypeError, "");
-		}
+	    Py_DECREF(item);
+	    QPy_RAISE_Err(PyExc_TypeError, "");
 	    return QPy_Err;
 	}
+    if (err) {
+	Py_XDECREF(key);
+	Py_XDECREF(value);
+	if (err == 1)
+	    QPy_RAISE_Err(PyExc_ValueError, "");
+	else
+	    QPy_RAISE_Err((QPyDict_PyObject)(void *)err, "");
+	return QPy_Err;
+    }
+
     return 0;
 }
 
-QPy_INLINE(int) QPyDict_SeqAsDict(QPyDictObject *self, QPyDict_PyObject iter, Py_ssize_t size)
+QPy_INLINE(int) QPyDict_SeqAsDict(QPyDictObject *self, QPyDict_PyObject seq, Py_ssize_t size)
 {
     return 0;
 }
 
-QPy_INLINE(int) QPyDict_MappingAsDict(QPyDictObject *self, QPyDict_PyObject iter, Py_ssize_t size)
+QPy_INLINE(int) QPyDict_MapAsDict(QPyDictObject *self, QPyDict_PyObject map, Py_ssize_t size)
 {
     return 0;
 }
@@ -192,40 +181,46 @@ static QPyDict_PyObject QPyDict_new(PyTypeObject *cls, QPyDict_PyObject QPy_UNUS
 
 static int QPyDict_init(QPyDict_PyObject _self, QPyDict_PyObject arg, QPyDict_PyObject kwargs)
 {
-    QPyDictObject * QPy_UNUSED(self) = (QPyDictObject *)_self;
-    QPy_ssize_t QPy_UNUSED(as);   // size of object in arg
+    QPyDictObject * QPy_UNUSED(self);
+    QPy_ssize_t QPy_UNUSED(as);   // size of positional arg
     QPy_ssize_t QPy_UNUSED(ks);   // size of keyword args
-    int         QPy_UNUSED(type); // type returned by QPyDict_GetCommonObjectSize
+    int         QPy_UNUSED(type), QPy_UNUSED(err);
 
     ks = as = type = 0;
+    // Get size and type of positional & keyword arguments
     if (NULL != arg)
 	{
 	    arg = PyTuple_GET_ITEM(arg, 0);
 	    if (NULL == arg)
 		return QPy_Err;
-
-	    type = QPyDict_GetCommonObjectSize(arg, &as, QPy_LONG_OR_SEQUENCE);
-	    if (type < 0)
-		{
-		    Py_DECREF(arg);
-		    return QPy_Err;
-		}
+	    type = QPyDict_GetCommonObjectSize(arg, &as, QPy_ALL);
 	}
-    if (NULL != kwargs && (QPyDict_GetCommonObjectSize(arg, &ks, QPy_MAP) < 0))
-	{
-	    Py_XDECREF(arg);
-	    return QPy_Err;
-	}
+    if (NULL != kwargs)
+	QPyDict_GetCommonObjectSize(arg, &ks, QPy_MAP);
 
+    // Allocate memory for entries
+    self = (QPyDictObject *)_self;
     if (QPy_Err == QPyDict_CustomInit(self, as + ks))
 	{
 	    Py_XDECREF(arg);
 	    return QPy_Err;
 	}
 
-    if (type && (type != QPy_SEQUENCE))
+    // Insert entries into dict
+    if (! (QPy_LONG & type))
 	{
-	    while ()
+	    // entries from positional argument
+	    err = (type & QPy_SEQUENCE) && QPyDict_SeqAsDict(self, args, as);
+	    err = (type & QPy_ITER)     && QPyDict_IterAsDict(self, args, as);
+	    err = (type & QPy_MAP)      && QPyDict_MapAsDict(self, args, as);
+	}
+    // entries from keyword arguments
+    if (err || (QPy_Err == QPyDict_MapAsDict(self, kwargs, ks)))
+	{
+	    // error! Deep clean dict
+	    QPyDict_ClearEntries(self);
+	    Py_XDECREF(arg);
+	    return QPy_Err;
 	}
 
     Py_XDECREF(arg);
