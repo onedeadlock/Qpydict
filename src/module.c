@@ -134,32 +134,41 @@ QPy_PTR_INLINE(int) QPyDict_CustomInit(QPyDictObject *self, QPy_ssize_t size)
 
 QPy_INLINE(int) QPyDict_IterAsDict(QPyDictObject *self, QPyDict_PyObject iter)
 {
-    QPyDict_PyObject QPy_UNUSED(item);
+    QPyDict_PyObject item, key, value;
+    uint8_t err;
 
-    if (PyIter_Check(iter))
+    if (! PyIter_Check(iter))
+	return QPy_Err;
+    item = key = value = err = 0;
+    while (PyIter_Next(iter, &item) > 0 && PyIter_Check(item))
 	{
-	    while (PyIter_Next(iter, &item) > 0)
-		{
-		    QPyDict_PyObject key, value;
+	    // get key and value from item
+	    err  = PyIter_Next(item, &key) < 1 || PyIter_Next(item, &value) < 1;
 
-		    if (PyIter_Next(item, &key) < 1)
-			{
-			    Py_DECREF(item);
-			    return QPy_Err;
-			}
-		    if (PyIter_Next(item, &value) < 1)
-			{
-			    Py_DECREF(item);
-			    return QPy_Err;
-			}
+	    // insert key and value into dict
+	    err += err || QPyDict_insert(self, key, value) == QPy_Err;
+	    Py_DECREF(item);
+	    if (err)
+		break;
+	    item = NULL;
+	}
 
-		    if (QPyDict_insert(self, key, value))
-			{
-			    Py_DECREF(item);
-			    return QPy_Err;
-			}
-		    Py_DECREF(item);
+    if (NULL != item)
+	{
+	    // TODO: deep cleanup dict here
+	    switch (err) {
+	    case 1:
+		// invalid length
+		QPy_RAISE_Err(PyExc_ValueError, "");
+		break;
+	    case 2:
+		// insert error (we only expect a memory error from call to insert)
+		QPy_RAISE_Err(PyExc_MemoryError, "");
+		break;
+	    default:
+		QPy_RAISE_Err(PyExc_TypeError, "");
 		}
+	    return QPy_Err;
 	}
     return 0;
 }
