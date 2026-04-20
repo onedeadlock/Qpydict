@@ -13,13 +13,16 @@ static QPyDict_PyObject QPyDict_new(PyTypeObject *cls, QPyDict_PyObject args, QP
 static int QPyDict_init(QPyDict_PyObject _self, QPyDict_PyObject args, QPyDict_PyObject kwds);
 static void QPyDict_dealloc(QPyDict_PyObject _self);
 static int QPyDict_traverse(QPyDict_PyObject _self, visitproc visit, void *arg);
-static int QPyDict_CustomInit(QPyDictObject *self, QPy_ssize_t size, void *conf);
+static int QPyDict_CustomInit(QPyDictObject *self, QPy_ssize_t size);
 
 // Class Methods
 QPyDict_PyObject QPyDict_Clear(QPyDict_PyObject self);
 QPyDict_PyObject QPyDict_Contains(QPyDict_PyObject self, QPyDict_PyObject arg);
 QPyDict_PyObject QPyDict_SetItem(QPyDict_PyObject self, QPyDict_PyObject args, QPyDict_PyObject kwargs);
 QPyDict_PyObject QPyDict_GetItem(QPyDict_PyObject self, QPyDict_PyObject args);
+
+// Class Internal Functions
+int QPyDict_insert(PyDictObject *self, QPyDict_PyObject key, QPyDict_PyObject value);
 
 static PyMemberDef QPyDict_attr[] = {
     {

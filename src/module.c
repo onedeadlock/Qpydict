@@ -109,9 +109,8 @@ QPy_INLINE(void *) QPyDict_ClearObject(QPyDictObject *self)
     return self;
 }
 
-QPy_PTR_INLINE(int) QPyDict_CustomInit(QPyDictObject *self, QPy_ssize_t size, void *conf)
+QPy_PTR_INLINE(int) QPyDict_CustomInit(QPyDictObject *self, QPy_ssize_t size)
 {
-    // the check for overflow was intentional skipped in init (main) because in the future, initialization may be forced continue or the behaviour could be configurable, or not.
     if (size < 0)
 	return QPy_RAISE_OVERFLOW("Integer Overflow:@call:internal:__init__");
 
@@ -130,6 +129,48 @@ QPy_PTR_INLINE(int) QPyDict_CustomInit(QPyDictObject *self, QPy_ssize_t size, vo
 	    QPyDict_SIZE(self)    = size;
 	    QPyDict_GSIZE(self)   =  0;
 	}
+    return 0;
+}
+
+QPy_INLINE(int) QPyDict_IterAsDict(QPyDictObject *self, QPyDict_PyObject iter)
+{
+    QPyDict_PyObject QPy_UNUSED(item);
+
+    if (PyIter_Check(iter))
+	{
+	    while (PyIter_Next(iter, &item) > 0)
+		{
+		    QPyDict_PyObject key, value;
+
+		    if (PyIter_Next(item, &key) < 1)
+			{
+			    Py_DECREF(item);
+			    return QPy_Err;
+			}
+		    if (PyIter_Next(item, &value) < 1)
+			{
+			    Py_DECREF(item);
+			    return QPy_Err;
+			}
+
+		    if (QPyDict_insert(self, key, value))
+			{
+			    Py_DECREF(item);
+			    return QPy_Err;
+			}
+		    Py_DECREF(item);
+		}
+	}
+    return 0;
+}
+
+QPy_INLINE(int) QPyDict_SeqAsDict(QPyDictObject *self, QPyDict_PyObject iter, Py_ssize_t size)
+{
+    return 0;
+}
+
+QPy_INLINE(int) QPyDict_MappingAsDict(QPyDictObject *self, QPyDict_PyObject iter, Py_ssize_t size)
+{
     return 0;
 }
 
@@ -161,23 +202,21 @@ static int QPyDict_init(QPyDict_PyObject _self, QPyDict_PyObject arg, QPyDict_Py
 		    return QPy_Err;
 		}
 	}
-
     if (NULL != kwargs && (QPyDict_GetCommonObjectSize(arg, &ks, QPy_MAP) < 0))
 	{
 	    Py_XDECREF(arg);
 	    return QPy_Err;
 	}
 
-    // create dict of size argsize + kwsize
-    if (QPy_Err == QPyDict_CustomInit(self, as + ks, NULL))
+    if (QPy_Err == QPyDict_CustomInit(self, as + ks))
 	{
 	    Py_XDECREF(arg);
 	    return QPy_Err;
 	}
 
-    if (type && (type != QPy_LONG))
+    if (type && (type != QPy_SEQUENCE))
 	{
-	    // TODO: arg is an iterable/mapping type instance. for each pair of item in arg, add to instance array
+	    while ()
 	}
 
     Py_XDECREF(arg);
