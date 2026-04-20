@@ -20,7 +20,7 @@ typedef Py_hash_t  QPy_hash_t;
 
 // Internal Types
 typedef struct {
-    uint8_t *cache;
+    uint8_t cache;
 } QPyDict_Cache_;
 
 typedef struct {
@@ -36,11 +36,10 @@ typedef QPyDict_Cache_ * QPyDict_Cache;
 typedef struct {
     PyObject_HEAD
     QPyDict_Cache  cache;
-    QPyDict_Array  data;
-    QPy_ssize_t    capacity;
-    QPy_ssize_t    grpsize;
-    QPy_ssize_t    size;
-    QPy_ssize_t    lf;
+    QPyDict_Array  entries;
+    QPy_ssize_t    nentries;
+    QPy_ssize_t    used_entries;
+    QPy_ssize_t    group_size;
 } QPyDictObject;
 
 #endif // QPy_TYPES_H

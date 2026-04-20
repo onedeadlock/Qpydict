@@ -1,16 +1,24 @@
 #include "module.h"
 
-#define QPy_ST_INLNULL(functype) __attribute__((nonnull, always_inline)) static inline functype
+#define QPy_PTR_INLINE(type) __attribute__((nonnull, always_inline)) static inline type
+#define QPy_INLINE(type)     __attribute__((always_inline))         static inline type
 #define QPy_SETVAL(lv, rv)       ((lv) = (rv))
 #define QPy_RAISE_Err(type, msg) (PyErr_SetString(type, msg), QPy_Err)
 #define QPy_RAISE_BADARG(msg)    QPy_RAISE_Err(PyExc_TypeError, msg)
-#define QPy_RAISE_OVERFLOW(msg)  QPy_RAISE_Err(PyExc_OverFlowError, msg)
+#define QPy_RAISE_OVERFLOW(msg)  QPy_RAISE_Err(PyExc_OverflowError, msg)
+
+#define QPyDict_CACHE(self)   ((self)->cache)
+#define QPyDict_ENTRIES(self) ((self)->entries)
+#define QPyDict_SIZE(self)    (self)->nentries)
+#define QPyDict_LEN(self)     ((self)->used_entries)
+#define QPyDict_GSIZE(self)   ((self)->group_size)
+#define QPy_TMPCACHE(self)    NULL
 
 enum {
     QPy_Err = -1,
     QPy_LONG = 321,
-    QPy_LONG_OR_SEQ,
-    QPy_SEQ,
+    QPy_LONG_OR_SEQUENCE,
+    QPy_SEQUENCE,
     QPy_MAP
 };
 
@@ -34,7 +42,36 @@ static int Qpydict_module_exec(QPyDict_PyObject module)
     return QPy_Err;
 }
 
-QPy_ST_INLNULL(int) QPyDict_GET_COMMON_OBJECT_SIZE(QPyDict_PyObject arg, QPy_ssize_t *size, int op)
+PyMODINIT_FUNC PyInit_Qpydict(void)
+{
+    return PyModuleDef_Init(&Qpydict_Module);
+}
+
+static void * QPyDict_malloc(QPy_ssize_t size, void *ptr)
+{
+    void *mem = calloc(1, size);
+
+    if (mem)
+	*(void **)ptr = mem;
+
+    return mem;
+}
+
+static void * QPyDict_aligned_malloc(QPy_ssize_t QPy_UNUSED(size), void *QPy_UNUSED(ptr))
+{
+    return NULL;
+}
+
+static void QPyDict_free(void *ptr)
+{
+    free(ptr);
+}
+
+static void QPyDict_aligned_free(void * QPy_UNUSED(ptr))
+{
+}
+
+QPy_PTR_INLINE(int) QPyDict_GetCommonObjectSize(QPyDict_PyObject arg, QPy_ssize_t *size, int op)
 {
     if (QPy_LONG_OR_SEQUENCE == op)
 	{
@@ -51,68 +88,81 @@ QPy_ST_INLNULL(int) QPyDict_GET_COMMON_OBJECT_SIZE(QPyDict_PyObject arg, QPy_ssi
 		{
 		    return QPy_SEQ;
 		}
-	    return QPy_RAISE_BADARG("`arg` is not an integer or does not support the sequence/iterator protocol@call:internal:QPyDict_GET_COMMON_OBJECT_SIZE(arg, ...)");
+	    return QPy_RAISE_BADARG("`arg` is not an integer or does not support the sequence/iterator protocol@call:internal:QPyDict_GetCommonObjectSize");
 	}
 
-    // size from MappingType object/instance (dict-like) 
+    // size from MappingType object/instance (dict-like)
     if ((QPy_MAP == op) && !PyMapping_Check(arg))
-	return QPy_RAISE_BADARG("`arg` does not suppprt the mapping protocol@call:internal:QPyDict_GET_COMMON_OBJECT_SIZE(arg, ...)");
+	return QPy_RAISE_BADARG("`arg` does not suppprt the mapping protocol@call:internal:QPyDict_GetCommonObjectSize");
 
     QPy_SETVAL(*size, PyMapping_Size(arg));
     return QPy_MAP;
 }
-PyMODINIT_FUNC PyInit_Qpydict(void)
+
+QPy_INLINE(void *) QPyDict_ClearObject(QPyDictObject *self)
 {
-    return PyModuleDef_Init(&Qpydict_Module);
+    if (self)
+	{
+	    memset(self, 0, sizeof (QPyDictObject));
+	    QPyDict_CACHE(self)  = QPy_TMPCACHE();
+	}
+    return self;
 }
 
-static QPyDict_PyObject QPyDict_new(PyTypeObject *cls, QPyDict_PyObject QPy_UNUSED(args), QPyDict_PyObject QPy_UNUSED(kwds))
-{
-    // Allocate memory for class
-    return (QPyDict_PyObject)(cls->tp_alloc(cls, 0));
-}
-
-QPy_ST_INLNULL(int) QPyDict_CustomInit(QPyDictObject *self, QPy_ssize_t size, void *conf)
+QPy_PTR_INLINE(int) QPyDict_CustomInit(QPyDictObject *self, QPy_ssize_t size, void *conf)
 {
     // the check for overflow was intentional skipped in init (main) because in the future, initialization may be forced continue or the behaviour could be configurable, or not.
     if (size < 0)
 	return QPy_RAISE_OVERFLOW("Integer Overflow:@call:internal:__init__");
 
-    // Set up the basic structure fields here
-
     if (size != 0)
 	{
-	    // TODO
-	    // - allocate memory for the entries to be stored in the internal array, as well as in the cache array, and do other stuff
+	    QPyDict_Array ar_; QPyDict_Cache ch_;
 
-	    return 1; // initialization steps is complete
+	    if (!QPyDict_malloc(QPy_ARRAY_SIZE * size, &ar_) || !QPyDict_malloc(QPy_CACHE_SIZE * size, &ch_))
+		{
+		    QPyDict_free(ar_);
+		    QPyDict_free(ch_);
+		    return QPy_RAISE_Err(PyExc_MemoryError, "Out of Memory@call:internal:__init__");
+		}
+	    QPyDict_ENTRIES(self) = ar_;
+	    QPyDict_CACHE(self)   = ch_;
+	    QPyDict_SIZE(self)    = size;
+	    QPyDict_GSIZE(self)   =  0;
 	}
-    return 0; // partial initialized object (a call to any insert functions does the rest)
+    return 0;
+}
+
+static QPyDict_PyObject QPyDict_new(PyTypeObject *cls, QPyDict_PyObject QPy_UNUSED(args), QPyDict_PyObject QPy_UNUSED(kwds))
+{
+    QPyDictObject *self = cls->tp_alloc(cls, 0);
+
+    return QPy_ClearObject(self);
 }
 
 static int QPyDict_init(QPyDict_PyObject _self, QPyDict_PyObject arg, QPyDict_PyObject kwargs)
 {
     QPyDictObject * QPy_UNUSED(self) = (QPyDictObject *)_self;
-    QPy_ssize_t QPy_UNUSED(as); // size of object in arg
-    QPy_ssize_t QPy_UNUSED(ks); // size of keyword args
-    int         QPy_UNUSED(type); // type returned by QPyDict_GET_COMMON_OBJECT_SIZE
+    QPy_ssize_t QPy_UNUSED(as);   // size of object in arg
+    QPy_ssize_t QPy_UNUSED(ks);   // size of keyword args
+    int         QPy_UNUSED(type); // type returned by QPyDict_GetCommonObjectSize
 
     ks = as = type = 0;
     if (NULL != arg)
 	{
-	    arg = PyTuple_GET_ITEM(arg, 0); 
+	    arg = PyTuple_GET_ITEM(arg, 0);
 	    if (NULL == arg)
 		return QPy_Err;
 
-	    type = QPyDict_GET_COMMON_OBJECT_SIZE(arg, &as, QPy_LONG_OR_SEQ);
+	    type = QPyDict_GetCommonObjectSize(arg, &as, QPy_LONG_OR_SEQUENCE);
 	    if (type < 0)
 		{
 		    Py_DECREF(arg);
 		    return QPy_Err;
 		}
 	}
-		
-    if (NULL != kwargs && (QPyDict_GET_COMMON_OBJECT_SIZE(arg, &ks, QPy_MAP) < 0))
+
+    if (NULL != kwargs && (QPyDict_GetCommonObjectSize(arg, &ks, QPy_MAP) < 0))
 	{
 	    Py_XDECREF(arg);
 	    return QPy_Err;
@@ -156,8 +206,8 @@ static void QPyDict_dealloc(QPyDict_PyObject _self)
        (1) clean all dict items. Basically:
        while ((self->sz)--)
        {
-           Py_XDECREF(self->Array->key);
-           Py_XDECREF(self->Array->val);
+       Py_XDECREF(self->Array->key);
+       Py_XDECREF(self->Array->val);
        }
        (2)
        Deallocate Array, Policy, Cache
