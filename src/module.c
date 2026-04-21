@@ -74,18 +74,13 @@ static void QPyDict_aligned_free(void * QPy_UNUSED(ptr))
 
 QPy_PTR_INLINE(int) QPyDict_GetCommonObjectSize(QPyDict_PyObject arg, QPy_ssize_t *size, int op)
 {
-    if ((op & QPy_MAP) && PyMapping_Check(arg))
-	return (QPy_SETVAL(*size, PyMapping_Size(arg)), QPy_MAP);
-    if ((op & QPy_SEQUENCE) && PySequence_Check(arg))
-	return (QPy_SETVAL(*size, PySequence_Size(arg)), QPy_SEQUENCE);
-    if ((op & QPy_ITER) && PyIter_Check(arg))
-	return (QPy_SETVAL(*size, QPy_DEFAULT_SIZE), QPy_ITER);
     if ((op & QPy_LONG) && PyLong_Check(arg))
 	{
 	    QPy_ssize_t _size = PyLong_AsSsize_t(arg);
 	    return _size < 0 ? QPy_Err : (QPy_SETVAL(*size, _size), QPy_LONG);
 	}
-    return QPy_Err;
+    QPy_SETVAL(*size, PyObject_LengthHint(arg, QPy_DEFAULT_SIZE));
+    return (QPy_ALL & ~QPy_LONG);
 }
 
 QPy_INLINE(void *) QPyDict_ClearObject(QPyDictObject *self)
@@ -120,6 +115,25 @@ QPy_PTR_INLINE(int) QPyDict_CustomInit(QPyDictObject *self, QPy_ssize_t size)
 	}
     return 0;
 }
+
+QPy_INLINE(int) QPyDict_MappingCheck(const QPyDict_PyObject arg)
+{
+    return PyObject_HasAttrString(arg, "keys");
+}
+
+QPy_INLINE(int) QPyDict_GetSizeFromArgKwargs(const QPyDict_PyObject restrict arg, const QPyDict_PyObject restrict kwargs)
+{
+    QPy_ssize_t QPy_UNUSED(as) = 0, QPy_UNUSED(ks) = 0, t = 0;
+
+    if (NULL != args
+	&& (t = QPyDict_GetCommonObjectSize(arg, &as, QPy_ALL)) < 0)
+	    return QPy_Err;
+    if (NULL != kwargs)
+	QPyDict_GetCommonObjectSize(arg, &ks, QPy_MAP);
+    
+    return (t & QPy_LONG) && (ks <= as) ? as : (as + ks);
+}
+
 
 QPy_INLINE(int) QPyDict_IterAsDict(QPyDictObject *self, QPyDict_PyObject iter)
 {
@@ -156,17 +170,97 @@ QPy_INLINE(int) QPyDict_IterAsDict(QPyDictObject *self, QPyDict_PyObject iter)
 	    QPy_RAISE_Err((QPyDict_PyObject)(void *)err, "");
 	return QPy_Err;
     }
-
     return 0;
 }
 
-QPy_INLINE(int) QPyDict_SeqAsDict(QPyDictObject *self, QPyDict_PyObject seq, Py_ssize_t size)
+
+QPy_INLINE(int) QPyDict_PyDictAsDict(QPyDictObject *self, QPyDict_PyObject arg)
 {
+    QPyDict_PyObject key, value;
+    QPy_ssize_t      pos = 0, err = 0;
+
+    while (!err && PyDict_Next(arg, &pos, &key, &value))
+	{
+	    Py_INCREF(key);
+	    Py_INCREF(value);
+	    err = PyDict_insert(self, key, value, NULL);
+	}
+    if (err)
+	{
+	    Py_DECREF(key);
+	    Py_DECREF(value);
+	    // the calling function should cleanup inserted entries
+	    return QPy_Err;
+	}
     return 0;
 }
 
-QPy_INLINE(int) QPyDict_MapAsDict(QPyDictObject *self, QPyDict_PyObject map, Py_ssize_t size)
+
+QPy_INLINE(int) QPyDict_MapAsDict(QPyDictObject *self, QPyDict_PyObject arg)
 {
+    QPyDict_PyObject *items, key, value;
+    QPy_ssize_t       pos,  err;
+
+    pos   = err = 0;
+    items = PySequence_Fast_ITEMS(PyMapping_Items(arg)); // items is a array of tuples
+    if (!items && (PyErr_ExceptionMatches(PyExc_MemoryError)))
+	{
+	    // fallback: try to get keys only
+	    items = PySequence_Fast_ITEMS(PyMapping_Keys(arg));
+	    if (NULL == items)
+		goto internal_error;
+	    // manually query values with keys
+	    for (QPy_ssize_t sz = PySequence_Fast_GET_SIZE(items); !err && (pos < sz); pos++)
+		{
+		    key   = items[pos];
+		    value = PyObject_GetItem(arg, key);
+		    Py_INCREF(key);
+		    err   = PyDict_insert(self, key, value, NULL);
+		}
+	    // check error
+	    goto error;
+	}
+
+    // extract keys and values from key-value pair tuples in list
+    for (QPy_ssize_t sz = PySequence_Fast_GET_SIZE(items); !err && (pos < sz); pos++)
+	{
+	    QPyDict_PyObject *tuple = PySequence_Fast_GET_ITEMS(items[pos]);
+
+	    key   = tuple[0];
+	    value = tuple[1];
+	    Py_INCREF(key);
+	    Py_INCREF(value);
+	    err = PyDict_insert(self, key, value, NULL);
+	}
+ error:
+    if (err)
+	{
+	    Py_DECREF(key);
+	    Py_DECREF(value);
+	internal_error:
+	    Py_XDECREF(items);
+	    return QPy_Err;
+	}
+    return 0;
+}
+
+QPy_INLINE(int) QPyDict_update_dict_fromArgKwargs(QPyDictObject *self, QPyDict_PyObject arg, QPyDict_PyObject kwargs)
+{
+    int err = 0;
+
+    // fast path if argument is of dict type
+    if (PyDict_CheckExact(arg))
+	err = QPyDict_PyDictAsDict(self, arg);
+    else if (QPyDict_MappingCheck(arg))
+	err = QPyDict_MapAsDict(self, arg);
+    else
+	{
+	    // fallback! slow iteration over arg (we treat arg as an iterator/sequence type)
+	    err = QPyDict_IterAsDict(self, args);
+	}
+    // keyword entries
+    if (err || QPyDict_PyDictAsDict(self, kwargs, ks) < 0)
+	return QPy_Err;
     return 0;
 }
 
@@ -177,50 +271,29 @@ static QPyDict_PyObject QPyDict_new(PyTypeObject *cls, QPyDict_PyObject QPy_UNUS
     return QPy_ClearObject(self);
 }
 
+
 static int QPyDict_init(QPyDict_PyObject _self, QPyDict_PyObject arg, QPyDict_PyObject kwargs)
 {
     QPyDictObject * QPy_UNUSED(self);
-    QPy_ssize_t QPy_UNUSED(as);   // size of positional arg
-    QPy_ssize_t QPy_UNUSED(ks);   // size of keyword args
-    int         QPy_UNUSED(type), QPy_UNUSED(err);
+    QPy_ssize_t     QPy_UNUSED(size);
 
-    ks = as = type = 0;
-    // Get size and type of positional & keyword arguments
-    if (NULL != arg)
-	{
-	    arg = PyTuple_GET_ITEM(arg, 0);
-	    if (NULL == arg)
-		return QPy_Err;
-	    type = QPyDict_GetCommonObjectSize(arg, &as, QPy_ALL);
-	}
-    if (NULL != kwargs)
-	QPyDict_GetCommonObjectSize(arg, &ks, QPy_MAP);
+    arg = PyTuple_GetItem(arg, 0);
+    if (NULL == arg)
+	PyErr_Clear(); // for now, ignore raised exception
 
     // Allocate memory for entries
+    size = QPyDict_GetSizeFromArgKwargs(arg, kwargs);
     self = (QPyDictObject *)_self;
-    if (QPy_Err == QPyDict_CustomInit(self, as + ks))
-	{
-	    Py_XDECREF(arg);
-	    return QPy_Err;
-	}
-
+    if (QPyDict_CustomInit(self, size) < 0)
+	return QPy_Err;
+ 
     // Insert entries into dict
-    if (! (QPy_LONG & type))
-	{
-	    // entries from positional argument
-	    err = (type & (QPy_SEQUENCE|QPy_ITER)) && QPyDict_IterAsDict(self, args, as);
-	    err = (type & QPy_MAP)      && QPyDict_MapAsDict(self, args, as);
-	}
-    // entries from keyword arguments
-    if (err || (QPy_Err == QPyDict_MapAsDict(self, kwargs, ks)))
+    if (QPyDict_update_dict_fromArgKwargs(self, arg, kwargs));
 	{
 	    // error! Deep clean dict
 	    QPyDict_ClearEntries(self);
-	    Py_XDECREF(arg);
 	    return QPy_Err;
 	}
-
-    Py_XDECREF(arg);
     return 0;
 }
 
