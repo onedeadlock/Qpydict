@@ -175,7 +175,7 @@ QPy_PTR_INLINE(int) QPyDict_FromPairsMapAsDict(QPyDictObject *self, QPyDict_PyOb
 
     for (QPy_ssize_t pos = 0; !err && (pos < sz); pos++)
 	{
-	    QPyDict_PyObject *pair = PySequence_Fast_GET_ITEMS(items[pos]);
+	    QPyDict_PyObject *pair = PySequence_Fast_ITEMS(items[pos]);
 
 	    key   = pair[0];
 	    value = pair[1];
