@@ -136,9 +136,55 @@ QPy_INLINE(int) QPyDict_GetSizeFromArgKwargs(const QPyDict_PyObject restrict arg
     return (t & QPy_LONG) && (ks <= as) ? as : (as + ks);
 }
 
+QPy_INLINE(int) QPyDict_IterAsDict(QPyDictObject *self, QPyDict_PyObject seq)
+{
+    QPyDict_PyObject *item, key, value;
+    uintptr_t err;
+
+    if (! PySequence_Check(seq))
+	return QPy_Err;
+
+    QPy_ssize_t sz = PySequence_Fast_GET_SIZE(seq);
+
+    item = PySequence_Fast_ITEMS(seq);
+    for (QPy_ssize_t pos = 0; (pos < sz) && PySequence_Check(item[pos]); pos++)
+	{
+	    
+	}
+}
 
 QPy_INLINE(int) QPyDict_IterAsDict(QPyDictObject *self, QPyDict_PyObject iter)
 {
+    QPyDict_PyObject item, key, value;
+    uintptr_t err;
+
+    if (! PyIter_Check(iter))
+	return QPy_Err;
+
+    item = key = value = err = 0;
+    while (!err && (PyIter_NextItem(iter, &item) > 0 && PyIter_Check(item)))
+	{
+	    key = value = NULL;
+	    // get key and value from item
+	    err  = PyIter_NextItem(item, &key) < 1 || PyIter_Next(item, &value) < 1;
+	    // insert key and value into dict
+	    err || QPyDict_insert(self, key, value, &err);
+	    Py_DECREF(item);
+	}
+    if (err) {
+	Py_XDECREF(key);
+	Py_XDECREF(value);
+	if (err == 1)
+	    QPy_RAISE_Err(PyErr_GetRaisedException(), "");
+	else
+	    QPy_RAISE_Err((void *)err, "")
+	return QPy_Err;
+    }
+    if (NULL != item || PyErr_Occured())
+	{
+	    Py_XDECREF(item);
+	    return QPy_Err;
+	}
     return 0;
 }
 
