@@ -291,11 +291,13 @@ static QPyDict_PyObject QPyDict_new(PyTypeObject *cls, QPyDict_PyObject QPy_UNUS
     return QPy_ClearObject(self);
 }
 
-
 static int QPyDict_init(QPyDict_PyObject _self, QPyDict_PyObject arg, QPyDict_PyObject kwargs)
 {
     QPyDictObject * QPy_UNUSED(self);
     QPy_ssize_t     QPy_UNUSED(size);
+
+    if (NULL == arg && NULL == kwargs)
+	return 0;
 
     arg = PyTuple_GetItem(arg, 0);
     if (NULL == arg)
