@@ -1,4 +1,7 @@
-# build cmd: python setup.py build_ext --build-lib test/shared_lib --build-temp test/build_temp on the main dir
+# linux style shell only!
+# open build.sh and set VENV path to your python venv path
+# set exec permission: chmod +x build.sh
+# run ./build (in the test directory)
 
 if __name__ == "__main__":
     try:

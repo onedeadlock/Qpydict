@@ -5,6 +5,7 @@
 #define Py_SSIZE_T_CLEAN
 #endif
 #include <Python.h>
+#include <stdlib.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <inttypes.h>

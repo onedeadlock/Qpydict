@@ -1,6 +1,7 @@
 #ifndef QPYDICT_MODULE_H
 #define QPYDICT_MODULE_H
-#include "types.h"
+#include "internal/include/types.h"
+#include "internal/include/methods.h"
 
 #define Qpydict_module_name "QPydict"
 #define Qpydict_module_doc  "A very fast Python dictionary"
@@ -21,22 +22,18 @@ QPyDict_PyObject QPyDict_Contains(QPyDict_PyObject self, QPyDict_PyObject arg);
 QPyDict_PyObject QPyDict_SetItem(QPyDict_PyObject self, QPyDict_PyObject args, QPyDict_PyObject kwargs);
 QPyDict_PyObject QPyDict_GetItem(QPyDict_PyObject self, QPyDict_PyObject args);
 
-// Class Internal Functions
-int QPyDict_insert(PyDictObject *self, QPyDict_PyObject key, QPyDict_PyObject value, uintptr_t *exc);
-void QPyDict_ClearEntries(PyDictObject *self);
-
 static PyMemberDef QPyDict_attr[] = {
     {
 	.name   = "capacity",
 	.type   = QPy_T_SSIZE,
-	.offset = offsetof(QPyDictObject, capacity),
+	.offset = offsetof(QPyDictObject, nentries),
 	.flags  = Py_READONLY,
 	.doc    = PyDoc_STR("")
     },
     {
 	.name   = "size",
 	.type   = QPy_T_SSIZE,
-	.offset = offsetof(QPyDictObject, size),
+	.offset = offsetof(QPyDictObject, used_entries),
 	.flags  = Py_READONLY,
 	.doc    = PyDoc_STR("")
     },

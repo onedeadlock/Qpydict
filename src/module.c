@@ -60,7 +60,7 @@ static void * QPyDict_malloc(QPy_ssize_t size, void *ptr)
     return mem;
 }
 
-static void * QPyDict_aligned_malloc(QPy_ssize_t QPy_UNUSED(size), void *QPy_UNUSED(ptr))
+__attribute__((unused)) static void * QPyDict_aligned_malloc(QPy_ssize_t QPy_UNUSED(size), void *QPy_UNUSED(ptr))
 {
     return NULL;
 }
@@ -70,7 +70,7 @@ static void QPyDict_free(void *ptr)
     free(ptr);
 }
 
-static void QPyDict_aligned_free(void * QPy_UNUSED(ptr))
+__attribute__((unused)) static void QPyDict_aligned_free(void * QPy_UNUSED(ptr))
 {
 }
 
@@ -102,7 +102,7 @@ QPy_PTR_INLINE(int) QPyDict_CustomInit(QPyDictObject *self, QPy_ssize_t size)
 
     if (size != 0)
 	{
-	    QPyDict_Array ar_; QPyDict_Cache ch_;
+	    QPyDict_Array ar_ = NULL; QPyDict_Cache ch_ = NULL;
 
 	    if (!QPyDict_malloc(QPy_ARRAY_SIZE * size, &ar_) || !QPyDict_malloc(QPy_CACHE_SIZE * size, &ch_))
 		{
@@ -125,9 +125,9 @@ QPy_INLINE(int) QPyDict_MappingCheck(const QPyDict_PyObject arg)
 
 QPy_INLINE(int) QPyDict_GetSizeFromArgKwargs(const QPyDict_PyObject restrict arg, const QPyDict_PyObject restrict kwargs)
 {
-    QPy_ssize_t QPy_UNUSED(as) = 0, QPy_UNUSED(ks) = 0, t = 0;
+    QPy_ssize_t as = 0, ks = 0, t = 0;
 
-    if (NULL != args
+    if (NULL != arg
 	&& (t = QPyDict_GetCommonObjectSize(arg, &as, QPy_ALL)) < 0)
 	    return QPy_Err;
     if (NULL != kwargs)
@@ -136,7 +136,8 @@ QPy_INLINE(int) QPyDict_GetSizeFromArgKwargs(const QPyDict_PyObject restrict arg
     return (t & QPy_LONG) && (ks <= as) ? as : (as + ks);
 }
 
-#define QPy_ITERNEXT(iter, item_ptr) (PyIter_NextItem(iter, item_ptr) < 1)
+// qpy-iter-next: return 0 for success else 1
+#define QPy_ITERNEXT(iter, arg) !(arg = PyIter_Next(iter)) // TODO: use PyIter_NextItem for python>=3.14
 
 QPy_INLINE(int) QPyDict_IterAsDict(QPyDictObject *self, QPyDict_PyObject arg)
 {
@@ -148,12 +149,12 @@ QPy_INLINE(int) QPyDict_IterAsDict(QPyDictObject *self, QPyDict_PyObject arg)
 	return QPy_Err;
 
     exc = PyErr_GetRaisedException();
-
-    while (!err && !QPy_ITERNEXT(iter, &items))
+    key = value = NULL;
+    while (!err && !QPy_ITERNEXT(iter, items))
 	{
-	    key  = value = NULL:
-	    err  = QPy_ITERNEXT(items, &key) || QPy_ITERNEXT(items, &value);
-	    err  = err                       || QPyDict_insert(self, key, value, NULL);
+	    key  = value = NULL; // this is not redundant
+	    err  = QPy_ITERNEXT(items, key) || QPy_ITERNEXT(items, value);
+	    err  = err                      || QPyDict_insert(self, key, value, NULL);
 	    Py_DECREF(items);
 	}
 
@@ -177,7 +178,7 @@ QPy_INLINE(int) QPyDict_PyDictAsDict(QPyDictObject *self, QPyDict_PyObject arg)
 	{
 	    Py_INCREF(key);
 	    Py_INCREF(value);
-	    err = PyDict_insert(self, key, value, NULL);
+	    err = QPyDict_insert(self, key, value, NULL);
 	}
     if (err)
 	{
@@ -196,7 +197,7 @@ QPy_PTR_INLINE(int) QPyDict_FromPairsMapAsDict(QPyDictObject *self, QPyDict_PyOb
     if (NULL == _items)
 	return QPy_Err;
 
-    QPyDict_PyObject  key,  value;
+    QPyDict_PyObject  key   = NULL, value = NULL;
     QPyDict_PyObject *items = PySequence_Fast_ITEMS(_items);
     QPy_ssize_t sz          = PySequence_Fast_GET_SIZE(_items);
     QPy_ssize_t err         = 0;
@@ -209,7 +210,7 @@ QPy_PTR_INLINE(int) QPyDict_FromPairsMapAsDict(QPyDictObject *self, QPyDict_PyOb
 	    value = pair[1];
 	    Py_INCREF(key);
 	    Py_INCREF(value);
-	    err = PyDict_insert(self, key, value, NULL);
+	    err = QPyDict_insert(self, key, value, NULL);
 	}
      if (err)
 	{
@@ -229,7 +230,7 @@ QPy_PTR_INLINE(int) QPyDict_FromKeysMapAsDict(QPyDictObject *self, QPyDict_PyObj
     if (NULL == _items)
 	return QPy_Err;
 
-    QPyDict_PyObject  key,  value;
+    QPyDict_PyObject  key   = NULL, value = NULL;
     QPyDict_PyObject *items = PySequence_Fast_ITEMS(_items);
     QPy_ssize_t sz          = PySequence_Fast_GET_SIZE(_items);
     QPy_ssize_t err         = 0;
@@ -239,7 +240,7 @@ QPy_PTR_INLINE(int) QPyDict_FromKeysMapAsDict(QPyDictObject *self, QPyDict_PyObj
 	    key   = items[pos];
 	    value = PyObject_GetItem(arg, key);
 	    Py_INCREF(key);
-	    err   = PyDict_insert(self, key, value, NULL);
+	    err   = QPyDict_insert(self, key, value, NULL);
 	}
     if (err)
 	{
@@ -276,27 +277,27 @@ QPy_INLINE(int) QPyDict_update_dict_fromArgKwargs(QPyDictObject *self, QPyDict_P
     else
 	{
 	    // fallback! slow iteration over arg (we treat arg as an iterator)
-	    err = QPyDict_IterAsDict(self, args);
+	    err = QPyDict_IterAsDict(self, arg);
 	}
     // keyword entries
-    if (err || QPyDict_PyDictAsDict(self, kwargs, ks) < 0)
+    if (err || QPyDict_PyDictAsDict(self, kwargs) < 0)
 	return QPy_Err;
     return 0;
 }
 
 static QPyDict_PyObject QPyDict_new(PyTypeObject *cls, QPyDict_PyObject QPy_UNUSED(args), QPyDict_PyObject QPy_UNUSED(kwds))
 {
-    QPyDictObject *self = cls->tp_alloc(cls, 0);
+    QPyDictObject *self = (void *)(cls->tp_alloc(cls, 0));
 
-    return QPy_ClearObject(self);
+    return QPyDict_ClearObject(self);
 }
 
 static int QPyDict_init(QPyDict_PyObject _self, QPyDict_PyObject arg, QPyDict_PyObject kwargs)
 {
-    QPyDictObject * QPy_UNUSED(self);
-    QPy_ssize_t     QPy_UNUSED(size);
+    QPyDictObject *self;
+    QPy_ssize_t    size;
 
-    if (NULL == arg && NULL == kwargs)
+    if (PyTuple_GET_SIZE(arg) && NULL == kwargs)
 	return 0;
 
     arg = PyTuple_GetItem(arg, 0);
@@ -310,7 +311,7 @@ static int QPyDict_init(QPyDict_PyObject _self, QPyDict_PyObject arg, QPyDict_Py
 	return QPy_Err;
 
     // Insert entries into dict
-    if (QPyDict_update_dict_fromArgKwargs(self, arg, kwargs));
+    if (QPyDict_update_dict_fromArgKwargs(self, arg, kwargs))
 	{
 	    // error! Deep clean dict
 	    QPyDict_ClearEntries(self);
