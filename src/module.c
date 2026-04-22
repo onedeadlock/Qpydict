@@ -140,26 +140,28 @@ QPy_INLINE(int) QPyDict_GetSizeFromArgKwargs(const QPyDict_PyObject restrict arg
 
 QPy_INLINE(int) QPyDict_IterAsDict(QPyDictObject *self, QPyDict_PyObject arg)
 {
-    QPyDict_PyObject items, key, value, exc;
+    QPyDict_PyObject iter, items, key, value, exc;
     QPy_ssize_t err = 0;
 
-    if (! PyIter_Check(arg))
+    iter = PyObject_GetIter(arg);
+    if (NULL == iter)
 	return QPy_Err;
 
     exc = PyErr_GetRaisedException();
 
-    while (!err && !QPy_ITERNEXT(arg, &items))
+    while (!err && !QPy_ITERNEXT(iter, &items))
 	{
 	    key  = value = NULL:
-	    err  = QPy_ITERNEXT(iter, &key) || QPy_ITERNEXT(iter, &value);
-	    err  = err                      || QPyDict_insert(self, key, value, NULL);
+	    err  = QPy_ITERNEXT(items, &key) || QPy_ITERNEXT(items, &value);
+	    err  = err                       || QPyDict_insert(self, key, value, NULL);
 	    Py_DECREF(items);
 	}
 
-    if (err || PyErr_Occured())
+    if (err || PyErr_Occurred())
 	{
 	    Py_XDECREF(key);
 	    Py_XDECREF(value);
+	    Py_DECREF(exc);
 	    return QPy_Err;
 	}
     PyErr_SetRaisedException(exc);
