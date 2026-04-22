@@ -191,13 +191,15 @@ QPy_INLINE(int) QPyDict_PyDictAsDict(QPyDictObject *self, QPyDict_PyObject arg)
 
 QPy_PTR_INLINE(int) QPyDict_FromPairsMapAsDict(QPyDictObject *self, QPyDict_PyObject arg)
 {
-    QPyDict_PyObject *items = PySequence_Fast_ITEMS(PyMapping_Items(arg));
+    QPyDict_PyObject _items = PyMapping_Items(arg);
 
-    if (NULL == items)
+    if (NULL == _items)
 	return QPy_Err;
 
-    QPyDict_PyObject key, value;
-    QPy_ssize_t      sz = PySequence_Fast_GET_SIZE(items), err = 0;
+    QPyDict_PyObject  key,  value;
+    QPyDict_PyObject *items = PySequence_Fast_ITEMS(_items);
+    QPy_ssize_t sz          = PySequence_Fast_GET_SIZE(_items);
+    QPy_ssize_t err         = 0;
 
     for (QPy_ssize_t pos = 0; !err && (pos < sz); pos++)
 	{
@@ -213,20 +215,24 @@ QPy_PTR_INLINE(int) QPyDict_FromPairsMapAsDict(QPyDictObject *self, QPyDict_PyOb
 	{
 	    Py_DECREF(key);
 	    Py_DECREF(value);
+	    Py_DECREF(_items);
 	    return QPy_Err;
 	}
+     Py_DECREF(_items);
      return 0;
 }
 
 QPy_PTR_INLINE(int) QPyDict_FromKeysMapAsDict(QPyDictObject *self, QPyDict_PyObject arg)
 {
-    QPyDict_PyObject *items = PySequence_Fast_ITEMS(PyMapping_Keys(arg));
+    QPyDict_PyObject _items = PyMapping_Items(arg);
 
-    if (NULL == items)
+    if (NULL == _items)
 	return QPy_Err;
 
-    QPyDict_PyObject key, value;
-    QPy_ssize_t      sz = PySequence_Fast_GET_SIZE(items), err = 0;
+    QPyDict_PyObject  key,  value;
+    QPyDict_PyObject *items = PySequence_Fast_ITEMS(_items);
+    QPy_ssize_t sz          = PySequence_Fast_GET_SIZE(_items);
+    QPy_ssize_t err         = 0;
 
     for (QPy_ssize_t pos = 0; !err && (pos < sz); pos++)
 	{
@@ -239,8 +245,10 @@ QPy_PTR_INLINE(int) QPyDict_FromKeysMapAsDict(QPyDictObject *self, QPyDict_PyObj
 	{
 	    Py_DECREF(key);
 	    Py_DECREF(value);
+	    Py_DECREF(_items);
 	    return QPy_Err;
 	}
+    Py_DECREF(_items);
     return 0;
 }
 
