@@ -4,14 +4,14 @@
 #define QPy_INLINE(type)     __attribute__((always_inline))         static inline type
 #define QPy_LIKELY(expr)     __builtin_expect(!!(expr), 1)
 #define QPy_UNLIKELY(expr)   __builtin_expect(!!(expr), 0)
-#define QPy_SETVAL(lv, rv)       ((lv) = (rv))
-#define QPy_RAISE_Err(type, msg) (PyErr_SetString(type, msg), QPy_Err)
-#define QPy_RAISE_BADARG(msg)    QPy_RAISE_Err(PyExc_TypeError, msg)
-#define QPy_RAISE_OVERFLOW(msg)  QPy_RAISE_Err(PyExc_OverflowError, msg)
+#define QPy_SETVAL(lv, rv)      ((lv) = (rv))
+#define QPy_SETEXC(type, msg)   (PyErr_SetString(type, msg), QPy_Err)
+#define QPy_RAISE_BADARG(msg)   QPy_SETEXC(PyExc_TypeError, msg)
+#define QPy_RAISE_OVERFLOW(msg) QPy_SETEXC(PyExc_OverflowError, msg)
 
 #define QPyDict_CACHE(self)   ((self)->cache)
 #define QPyDict_ENTRIES(self) ((self)->entries)
-#define QPyDict_SIZE(self)    (self)->nentries)
+#define QPyDict_SIZE(self)    ((self)->nentries)
 #define QPyDict_LEN(self)     ((self)->used_entries)
 #define QPyDict_GSIZE(self)   ((self)->group_size)
 #define QPy_TMPCACHE(self)    NULL
@@ -108,7 +108,7 @@ QPy_PTR_INLINE(int) QPyDict_CustomInit(QPyDictObject *self, QPy_ssize_t size)
 		{
 		    QPyDict_free(ar_);
 		    QPyDict_free(ch_);
-		    return QPy_RAISE_Err(PyExc_MemoryError, "Out of Memory@call:internal:__init__");
+		    return QPy_SETEXC(PyExc_MemoryError, "Out of Memory@call:internal:__init__");
 		}
 	    QPyDict_ENTRIES(self) = ar_;
 	    QPyDict_CACHE(self)   = ch_;
@@ -132,13 +132,37 @@ QPy_INLINE(int) QPyDict_GetSizeFromArgKwargs(const QPyDict_PyObject restrict arg
 	    return QPy_Err;
     if (NULL != kwargs)
 	QPyDict_GetCommonObjectSize(arg, &ks, QPy_MAP);
-    
+
     return (t & QPy_LONG) && (ks <= as) ? as : (as + ks);
 }
 
+#define QPy_ITERNEXT(iter, item_ptr) (PyIter_NextItem(iter, item_ptr) < 1)
 
-QPy_INLINE(int) QPyDict_IterAsDict(QPyDictObject *self, QPyDict_PyObject iter)
+QPy_INLINE(int) QPyDict_IterAsDict(QPyDictObject *self, QPyDict_PyObject arg)
 {
+    QPyDict_PyObject items, key, value, exc;
+    QPy_ssize_t err = 0;
+
+    if (! PyIter_Check(arg))
+	return QPy_Err;
+
+    exc = PyErr_GetRaisedException();
+
+    while (!err && !QPy_ITERNEXT(arg, &items))
+	{
+	    key  = value = NULL:
+	    err  = QPy_ITERNEXT(iter, &key) || QPy_ITERNEXT(iter, &value);
+	    err  = err                      || QPyDict_insert(self, key, value, NULL);
+	    Py_DECREF(items);
+	}
+
+    if (err || PyErr_Occured())
+	{
+	    Py_XDECREF(key);
+	    Py_XDECREF(value);
+	    return QPy_Err;
+	}
+    PyErr_SetRaisedException(exc);
     return 0;
 }
 
@@ -198,7 +222,7 @@ QPy_PTR_INLINE(int) QPyDict_FromKeysMapAsDict(QPyDictObject *self, QPyDict_PyObj
 
     if (NULL == items)
 	return QPy_Err;
-    
+
     QPyDict_PyObject key, value;
     QPy_ssize_t      sz = PySequence_Fast_GET_SIZE(items), err = 0;
 
@@ -221,10 +245,10 @@ QPy_PTR_INLINE(int) QPyDict_FromKeysMapAsDict(QPyDictObject *self, QPyDict_PyObj
 QPy_INLINE(int) QPyDict_MapAsDict(QPyDictObject *self, QPyDict_PyObject arg)
 {
     QPy_ssize_t err = QPyDict_FromPairsMapAsDict(self, arg);
-    
+
     if (err < 0 && PyErr_ExceptionMatches(PyExc_MemoryError))
 	{
-	    // fallback: try only keys 
+	    // fallback: try only keys
 	    return QPyDict_FromKeysMapAsDict(self, arg);
 	}
     return err;
@@ -272,7 +296,7 @@ static int QPyDict_init(QPyDict_PyObject _self, QPyDict_PyObject arg, QPyDict_Py
     self = (QPyDictObject *)_self;
     if (QPyDict_CustomInit(self, size) < 0)
 	return QPy_Err;
- 
+
     // Insert entries into dict
     if (QPyDict_update_dict_fromArgKwargs(self, arg, kwargs));
 	{
