@@ -12,7 +12,6 @@
 #define QPy_ITERNEXT(iter, arg) !(arg = PyIter_Next(iter)) // TODO: use PyIter_NextItem for python>=3.14
 #define QPy_TUPLE_GETITEM(tuple, item, i) !(item = PyTuple_GetItem(tuple, i))
 
-
 #define QPyDict_CACHE(self)   ((self)->cache)
 #define QPyDict_ENTRIES(self) ((self)->entries)
 #define QPyDict_SIZE(self)    ((self)->nentries)
@@ -37,22 +36,22 @@ static QPyDict_PyObject version(QPyDict_PyObject QPy_UNUSED(module), QPyDict_PyO
 
 static int Qpydict_module_exec(QPyDict_PyObject module)
 {
-    PyTypeObject *cls = (PyTypeObject *)PyType_FromModuleAndSpec(module, &QPyDict_clsspec, NULL);
+    // Create, initialize and add class to the module's namespace
+    QPyDict_PyObject cls = PyType_FromModuleAndSpec(module, &QPyDict_clsspec, NULL);
 
-    // Add class to the modules namespace (dict)
-    if (cls && !(PyModule_AddType(module, cls) < 0))
+    if (NULL == cls || PyModule_AddObject(module, QPyDict_class_name, cls) < 0)
 	{
-	    Py_DECREF(cls);
-	    return 0;
+	    Py_XDECREF(cls);
+	    return QPy_Err;
 	}
-    Py_DECREF(cls);
-    return QPy_Err;
+    return 0;
 }
 
 PyMODINIT_FUNC PyInit_Qpydict(void)
-{
+{   
     return PyModuleDef_Init(&Qpydict_Module);
 }
+
 
 static void * QPyDict_malloc(QPy_ssize_t size, void *ptr)
 {
@@ -60,7 +59,6 @@ static void * QPyDict_malloc(QPy_ssize_t size, void *ptr)
 
     if (mem)
 	*(void **)ptr = mem;
-
     return mem;
 }
 
@@ -93,8 +91,11 @@ QPy_INLINE(void *) QPyDict_ClearObject(QPyDictObject *self)
 {
     if (self)
 	{
-	    memset(self + sizeof(PyObject), 0, sizeof (QPyDictObject) - sizeof (PyObject));
-	    QPyDict_CACHE(self)  = QPy_TMPCACHE();
+	    QPyDict_ENTRIES(self) = NULL;
+	    QPyDict_CACHE(self)   = QPy_TMPCACHE();
+	    QPyDict_LEN(self)     = 0;
+	    QPyDict_SIZE(self)    = 0;
+	    QPyDict_GSIZE(self)   = 0;
 	}
     return self;
 }
@@ -288,8 +289,7 @@ QPy_INLINE(int) QPyDict_update_dict_fromArgKwargs(QPyDictObject *self, QPyDict_P
 
 static QPyDict_PyObject QPyDict_new(PyTypeObject *cls, QPyDict_PyObject QPy_UNUSED(args), QPyDict_PyObject QPy_UNUSED(kwds))
 {
-    QPyDictObject *self = (void *)(cls->tp_alloc(cls, 0));
-
+    QPyDictObject *self = (QPyDictObject *)(cls->tp_alloc(cls, 0));
     return QPyDict_ClearObject(self);
 }
 
@@ -334,22 +334,11 @@ static void QPyDict_dealloc(QPyDict_PyObject _self)
     QPyDictObject *self = (QPyDictObject *)_self;
     PyTypeObject  *cls  = Py_TYPE(self);
 
-    // untrack from GC
+    // untrack from the Garbage Collector
     PyObject_GC_UnTrack(cls);
-    Py_CLEAR(cls);
 
-    /**
-       TDDO
-       (1) clean all dict items. Basically:
-       while ((self->sz)--)
-       {
-       Py_XDECREF(self->Array->key);
-       Py_XDECREF(self->Array->val);
-       }
-       (2)
-       Deallocate Array, Policy, Cache
-    */
+    // Deep clean entries
+    QPyDict_ClearEntries(self);
 
-    // free class object
-    cls->tp_free(self);
+    cls->tp_free(cls);
 }

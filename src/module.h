@@ -3,8 +3,10 @@
 #include "internal/include/types.h"
 #include "internal/include/methods.h"
 
-#define Qpydict_module_name "QPydict"
-#define Qpydict_module_doc  "A very fast Python dictionary"
+#define QPyDict_class_qualname "Qpydict.qpydict"
+#define QPyDict_class_name     "qpydict"
+#define Qpydict_module_name    "Qpydict"
+#define Qpydict_module_doc     "A very fast Python dictionary"
 
 static int Qpydict_module_exec(QPyDict_PyObject module);
 static QPyDict_PyObject version(QPyDict_PyObject module, QPyDict_PyObject arg);
@@ -24,14 +26,14 @@ QPyDict_PyObject QPyDict_GetItem(QPyDict_PyObject self, QPyDict_PyObject args);
 
 static PyMemberDef QPyDict_attr[] = {
     {
-	.name   = "capacity",
+	.name   = "_capacity",
 	.type   = QPy_T_SSIZE,
 	.offset = offsetof(QPyDictObject, nentries),
 	.flags  = Py_READONLY,
 	.doc    = PyDoc_STR("")
     },
     {
-	.name   = "size",
+	.name   = "_size",
 	.type   = QPy_T_SSIZE,
 	.offset = offsetof(QPyDictObject, used_entries),
 	.flags  = Py_READONLY,
@@ -54,6 +56,7 @@ static PyType_Slot QPyDict_slots[] = {
     {Py_tp_new,        QPyDict_new},
     {Py_tp_init,       QPyDict_init},
     {Py_tp_alloc,      PyType_GenericAlloc},
+    {Py_tp_free,       PyObject_GC_Del},
     {Py_tp_dealloc,    QPyDict_dealloc},
     {Py_tp_traverse,   QPyDict_traverse},
     {Py_tp_members,    QPyDict_attr},
@@ -63,7 +66,7 @@ static PyType_Slot QPyDict_slots[] = {
 };
 
 static PyType_Spec QPyDict_clsspec = {
-    .name      = "QPydict.QPyDict",
+    .name      = QPyDict_class_qualname,
     .basicsize = sizeof(QPyDictObject),
     .itemsize  = 0,
     .flags     = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC,
