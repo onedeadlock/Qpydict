@@ -8,6 +8,10 @@
 #define QPy_SETEXC(type, msg)   (PyErr_SetString(type, msg), QPy_Err)
 #define QPy_RAISE_BADARG(msg)   QPy_SETEXC(PyExc_TypeError, msg)
 #define QPy_RAISE_OVERFLOW(msg) QPy_SETEXC(PyExc_OverflowError, msg)
+// qpy-iter-next: return 0 for success else 1
+#define QPy_ITERNEXT(iter, arg) !(arg = PyIter_Next(iter)) // TODO: use PyIter_NextItem for python>=3.14
+#define QPy_TUPLE_GETITEM(tuple, item, i) !(item = PyTuple_GetItem(tuple, i))
+
 
 #define QPyDict_CACHE(self)   ((self)->cache)
 #define QPyDict_ENTRIES(self) ((self)->entries)
@@ -89,7 +93,7 @@ QPy_INLINE(void *) QPyDict_ClearObject(QPyDictObject *self)
 {
     if (self)
 	{
-	    memset(self, 0, sizeof (QPyDictObject));
+	    memset(self + sizeof(PyObject), 0, sizeof (QPyDictObject) - sizeof (PyObject));
 	    QPyDict_CACHE(self)  = QPy_TMPCACHE();
 	}
     return self;
@@ -135,9 +139,6 @@ QPy_INLINE(int) QPyDict_GetSizeFromArgKwargs(const QPyDict_PyObject restrict arg
 
     return (t & QPy_LONG) && (ks <= as) ? as : (as + ks);
 }
-
-// qpy-iter-next: return 0 for success else 1
-#define QPy_ITERNEXT(iter, arg) !(arg = PyIter_Next(iter)) // TODO: use PyIter_NextItem for python>=3.14
 
 QPy_INLINE(int) QPyDict_IterAsDict(QPyDictObject *self, QPyDict_PyObject arg)
 {
@@ -294,24 +295,24 @@ static QPyDict_PyObject QPyDict_new(PyTypeObject *cls, QPyDict_PyObject QPy_UNUS
 
 static int QPyDict_init(QPyDict_PyObject _self, QPyDict_PyObject arg, QPyDict_PyObject kwargs)
 {
-    QPyDictObject *self;
-    QPy_ssize_t    size;
+    QPyDict_PyObject pos_arg;
+    QPyDictObject   *self;
+    QPy_ssize_t      size;
 
-    if (PyTuple_GET_SIZE(arg) && NULL == kwargs)
+    if (QPy_TUPLE_GETITEM(arg, pos_arg, 0))
+	PyErr_Clear();
+    if (NULL == pos_arg && NULL == kwargs)
 	return 0;
 
-    arg = PyTuple_GetItem(arg, 0);
-    if (NULL == arg)
-	PyErr_Clear(); // for now, ignore raised exception
-
     // Allocate memory for entries
-    size = QPyDict_GetSizeFromArgKwargs(arg, kwargs);
+    size = QPyDict_GetSizeFromArgKwargs(pos_arg, kwargs);
     self = (QPyDictObject *)_self;
+
     if (QPyDict_CustomInit(self, size) < 0)
 	return QPy_Err;
 
     // Insert entries into dict
-    if (QPyDict_update_dict_fromArgKwargs(self, arg, kwargs))
+    if (QPyDict_update_dict_fromArgKwargs(self, pos_arg, kwargs))
 	{
 	    // error! Deep clean dict
 	    QPyDict_ClearEntries(self);

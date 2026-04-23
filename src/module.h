@@ -66,7 +66,7 @@ static PyType_Spec QPyDict_clsspec = {
     .name      = "QPydict.QPyDict",
     .basicsize = sizeof(QPyDictObject),
     .itemsize  = 0,
-    .flags     = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HEAPTYPE | Py_TPFLAGS_HAVE_GC,
+    .flags     = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC,
     .slots      = QPyDict_slots
 };
 
