@@ -3,26 +3,25 @@
 #include "internal/include/types.h"
 #include "internal/include/methods.h"
 
-#define QPyDict_class_qualname "Qpydict.qpydict"
-#define QPyDict_class_name     "qpydict"
-#define Qpydict_module_name    "Qpydict"
-#define Qpydict_module_doc     "A very fast Python dictionary"
+#define QPy_class_qualname  "Qpydict.qpydict"
+#define QPy_class_name      "qpydict"
+#define Qpydict_module_name "Qpydict"
+#define Qpydict_module_doc  "A very fast Python dictionary"
 
-static int Qpydict_module_exec(QPyDict_PyObject module);
-static QPyDict_PyObject version(QPyDict_PyObject module, QPyDict_PyObject arg);
+static int Qpydict_module_exec(QPy_PyObject module);
+static QPy_PyObject version(QPy_PyObject module, QPy_PyObject arg);
 
 // Initialization
-static QPyDict_PyObject QPyDict_new(PyTypeObject *cls, QPyDict_PyObject args, QPyDict_PyObject kwds);
-static int QPyDict_init(QPyDict_PyObject _self, QPyDict_PyObject args, QPyDict_PyObject kwds);
-static void QPyDict_dealloc(QPyDict_PyObject _self);
-static int QPyDict_traverse(QPyDict_PyObject _self, visitproc visit, void *arg);
-static int QPyDict_CustomInit(QPyDictObject *self, QPy_ssize_t size);
+static QPy_PyObject QPyDict_new(PyTypeObject *cls, QPy_PyObject args, QPy_PyObject kwds);
+static int QPyDict_init(QPy_PyObject _self, QPy_PyObject args, QPy_PyObject kwds);
+static void QPyDict_dealloc(QPy_PyObject _self);
+static int QPyDict_traverse(QPy_PyObject _self, visitproc visit, void *arg);
 
 // Class Methods
-QPyDict_PyObject QPyDict_Clear(QPyDict_PyObject self);
-QPyDict_PyObject QPyDict_Contains(QPyDict_PyObject self, QPyDict_PyObject arg);
-QPyDict_PyObject QPyDict_SetItem(QPyDict_PyObject self, QPyDict_PyObject args, QPyDict_PyObject kwargs);
-QPyDict_PyObject QPyDict_GetItem(QPyDict_PyObject self, QPyDict_PyObject args);
+QPy_PyObject QPyDict_Clear(QPy_PyObject self);
+QPy_PyObject QPyDict_Contains(QPy_PyObject self, QPy_PyObject arg);
+QPy_PyObject QPyDict_SetItem(QPy_PyObject self, QPy_PyObject args, QPy_PyObject kwargs);
+QPy_PyObject QPyDict_GetItem(QPy_PyObject self, QPy_PyObject args);
 
 static PyMemberDef QPyDict_attr[] = {
     {
@@ -66,7 +65,7 @@ static PyType_Slot QPyDict_slots[] = {
 };
 
 static PyType_Spec QPyDict_clsspec = {
-    .name      = QPyDict_class_qualname,
+    .name      = QPy_class_qualname,
     .basicsize = sizeof(QPyDictObject),
     .itemsize  = 0,
     .flags     = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC,

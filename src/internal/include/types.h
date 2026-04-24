@@ -16,7 +16,7 @@
 #define QPy_CACHE_SIZE   sizeof(QPyDict_Cache_)
 #define QPy_DEFAULT_SIZE 0 // TODO: set
 
-typedef PyObject * QPyDict_PyObject;
+typedef PyObject * QPy_PyObject;
 typedef Py_ssize_t QPy_ssize_t;
 typedef Py_hash_t  QPy_hash_t;
 
@@ -26,9 +26,9 @@ typedef struct {
 } QPyDict_Cache_;
 
 typedef struct {
-    QPyDict_PyObject key;
-    QPyDict_PyObject value;
-    QPy_hash_t       hash;
+    QPy_PyObject key;
+    QPy_PyObject value;
+    QPy_hash_t   hash;
 } QPyDict_Array_;
 
 typedef QPyDict_Array_ * QPyDict_Array;
