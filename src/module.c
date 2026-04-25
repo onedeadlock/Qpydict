@@ -9,9 +9,7 @@
 #define QPy_RAISE_BADARG(msg)   QPy_SETEXC(PyExc_TypeError, msg)
 #define QPy_RAISE_OVERFLOW(msg) QPy_SETEXC(PyExc_OverflowError, msg)
 // qpy-iter-next: return 0 for success else 1
-#define QPy_ITERNEXT(iter, arg) !QPy_SETVAL(arg, PyIter_Next(iter)) // TODO: use PyIter_NextItem for python>=3.14
-#define QPy_GETITER(arg, iter)  QPy_SETVAL(iter, PyObject_GetIter(arg))
-#define QPy_ITERITEMS_GETPAIR(iter, items, pair) (!QPy_ITERNEXT(iter, items) && QPy_GETITER(items, pair))
+#define QPy_ITERNEXT(iter, arg) QPy_SETVAL(*arg, PyIter_Next(iter)) // TODO: use PyIter_NextItem for python>=3.14
 #define QPy_TUPLE_GETITEM(tuple, item, i) !(item = PyTuple_GetItem(tuple, i))
 
 #define QPy_CACHE(self)   ((self)->cache)
@@ -143,49 +141,6 @@ QPy_INLINE(int) QPy_GetSizeFromArgKwargs(const QPy_PyObject restrict arg, const 
     return (t & QPy_LONG) && (ks <= as) ? as : (as + ks);
 }
 
-QPy_INLINE(int) QPy_IterAsDict(QPyDictObject *self, QPy_PyObject arg)
-{
-    QPy_PyObject iter, items, pair;
-    QPy_PyObject key = NULL,  value = NULL;
-    QPy_ssize_t  err = 0;
-
-    if (QPy_UNLIKELY(NULL == arg))
-	return 0;
-
-    if (NULL == QPy_GETITER(arg, iter))
-    	return QPy_Err;
-	    
-   while (!err && QPy_ITERITEMS_GETPAIR(iter, items, pair))
-	{
-	    key  = value = NULL; // this is not redundant
-	    err  = QPy_ITERNEXT(pair, key) || QPy_ITERNEXT(pair, value);
-	    err  = err                     || QPy_insert(self, key, value, NULL);
- 
-	    //Py_DECREF(items);
-	    //Py_DECREF(pair);
-	    items = NULL;
-	}    
-    if (err || PyErr_Occurred())
-	{
-	    if (NULL != items)
-		{
-		    // items.pair is not iterable
-		    (void)QPy_RAISE_BADARG("");
-		    Py_DECREF(items);
-		}
-	    /*
-	     * TODO: Raise exception here.
-	     * if key   == NULL: expected a size 2 but got 0
-	     * if value == NULL: expected a size 2 but got 1
-	     * else some other error occured
-	     */
-	    Py_XDECREF(key);
-	    Py_XDECREF(value);
-	    return QPy_Err;
-	}
-    return 0;
-}
-
 QPy_INLINE(int) QPy_PyDictAsDict(QPyDictObject *self, QPy_PyObject arg)
 {
     QPy_PyObject key, value;
@@ -284,6 +239,43 @@ QPy_INLINE(int) QPy_MapAsDict(QPyDictObject *self, QPy_PyObject arg)
     return err;
 }
 
+int QPyDict_IterAsDict(QPyDictObject *self, QPy_PyObject arg)
+{
+    QPy_PyObject iter, item = NULL;
+
+    iter = PyObject_GetIter(arg);
+    if (iter == NULL)
+        return QPy_Err;
+    
+    QPy_PyObject key, value;
+    Py_ssize_t   err  = 0;
+
+    while (err == 0 && QPy_ITERNEXT(iter, &item))
+	{
+	    QPy_PyObject pair = PySequence_Fast(item, "");
+
+	    if (QPy_LIKELY(pair && PySequence_Fast_GET_SIZE(pair) == 2))
+		{
+		    key   = PySequence_Fast_GET_ITEM(pair, 0);
+		    value = PySequence_Fast_GET_ITEM(pair, 1);
+		    Py_INCREF(key);
+		    Py_INCREF(value);
+		    err   = QPy_insert(self, key, value, NULL);
+		    Py_DECREF(pair);
+		    Py_DECREF(item);
+		    item = NULL;
+		    continue;
+		}
+	    // TODO: Handle error
+	    goto error;
+	}
+    Py_DECREF(iter);
+    return 0;
+
+error:
+    Py_DECREF(iter);
+    return 0;
+}
 QPy_INLINE(int) QPy_UpdateDict_FromArgKwargs(QPyDictObject *self, QPy_PyObject arg, QPy_PyObject kwargs)
 {
     int err = 0;
@@ -294,7 +286,7 @@ QPy_INLINE(int) QPy_UpdateDict_FromArgKwargs(QPyDictObject *self, QPy_PyObject a
     else if (QPy_MappingCheck(arg))
 	err = QPy_MapAsDict(self, arg);
     else
-	err = QPy_IterAsDict(self, arg); // fallback! slow iteration over arg (we treat arg as an iterator)
+	err = QPyDict_IterAsDict(self, arg); // fallback! slow iteration over arg (we treat arg as an iterator)
  
     if (err || QPy_PyDictAsDict(self, kwargs) < 0)
 	return QPy_Err;
@@ -320,7 +312,6 @@ static int QPyDict_init(QPy_PyObject _self, QPy_PyObject arg, QPy_PyObject kwarg
 
     // Allocate memory for entries
     size = QPy_GetSizeFromArgKwargs(pos_arg, kwargs);
-    size = 1000;
     self = (QPyDictObject *)_self;
     if (QPy_CustomInit(self, size) < 0)
 	    return QPy_Err;
