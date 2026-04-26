@@ -1,9 +1,0 @@
-#ifndef QPy_METHODS_H
-#define QPy_METHODS_H
-#include "types.h"
-
-int QPyDict_insert(PyDictObject *self, QPyDict_PyObject key, QPyDict_PyObject value, uintptr_t *exc);
-
-void QPyDict_ClearEntries(PyDictObject *self);
-
-#endif //QPy_METHODS_H
