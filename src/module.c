@@ -149,7 +149,7 @@ QPy_INLINE(int) QPy_PyDictAsDict(QPyDictObject *self, QPy_PyObject arg)
     if (NULL == arg)
 	return 0;
 
-    while (!err && PyDict_Next(arg, &pos, &key, &value))
+    while (err == 0 && PyDict_Next(arg, &pos, &key, &value))
 	{
 	    Py_INCREF(key);
 	    Py_INCREF(value);
@@ -174,9 +174,9 @@ QPy_PTR_INLINE(int) QPy_FromPairs_MapAsDict(QPyDictObject *self, QPy_PyObject ar
     QPy_PyObject  key   = NULL, value = NULL;
     QPy_PyObject *items = PySequence_Fast_ITEMS(_items);
     QPy_ssize_t   sz    = PySequence_Fast_GET_SIZE(_items);
-    QPy_ssize_t err         = 0;
+    QPy_ssize_t   err   = 0;
 
-    for (QPy_ssize_t pos = 0; !err && (pos < sz); pos++)
+    for (QPy_ssize_t pos = 0; err == 0 && (pos < sz); pos++)
 	{
 	    QPy_PyObject *pair = PySequence_Fast_ITEMS(items[pos]);
 
@@ -199,31 +199,31 @@ QPy_PTR_INLINE(int) QPy_FromPairs_MapAsDict(QPyDictObject *self, QPy_PyObject ar
 
 QPy_PTR_INLINE(int) QPy_FromKeys_MapAsDict(QPyDictObject *self, QPy_PyObject arg)
 {
-    QPy_PyObject _items = PyMapping_Items(arg);
+    QPy_PyObject _keys = PyMapping_Keys(arg);
 
     if (NULL == _items)
 	return QPy_Err;
 
     QPy_PyObject  key   = NULL, value = NULL;
-    QPy_PyObject *items = PySequence_Fast_ITEMS(_items);
-    QPy_ssize_t   sz    = PySequence_Fast_GET_SIZE(_items);
-    QPy_ssize_t err         = 0;
+    QPy_PyObject *items = PySequence_Fast_ITEMS(_keys);
+    QPy_ssize_t   sz    = PySequence_Fast_GET_SIZE(_keys);
+    QPy_ssize_t   err   = 0;
 
-    for (QPy_ssize_t pos = 0; !err && (pos < sz); pos++)
+    for (QPy_ssize_t pos = 0; err == 0 && (pos < sz); pos++)
 	{
 	    key   = items[pos];
 	    value = PyObject_GetItem(arg, key);
 	    Py_INCREF(key);
-	    err   = QPy_insert(self, key, value, NULL);
+	    err = QPy_insert(self, key, value, NULL);
 	}
     if (err)
 	{
 	    Py_DECREF(key);
 	    Py_DECREF(value);
-	    Py_DECREF(_items);
+	    Py_DECREF(_keys);
 	    return QPy_Err;
 	}
-    Py_DECREF(_items);
+    Py_DECREF(_keys);
     return 0;
 }
 
@@ -245,8 +245,8 @@ int QPyDict_IterAsDict(QPyDictObject *self, QPy_PyObject arg)
 
     iter = PyObject_GetIter(arg);
     if (iter == NULL)
-        return QPy_Err;
-    
+	return QPy_Err;
+
     QPy_PyObject key, value;
     Py_ssize_t   err  = 0;
 
@@ -261,6 +261,7 @@ int QPyDict_IterAsDict(QPyDictObject *self, QPy_PyObject arg)
 		    Py_INCREF(key);
 		    Py_INCREF(value);
 		    err   = QPy_insert(self, key, value, NULL);
+
 		    Py_DECREF(pair);
 		    Py_DECREF(item);
 		    item = NULL;
@@ -287,7 +288,7 @@ QPy_INLINE(int) QPy_UpdateDict_FromArgKwargs(QPyDictObject *self, QPy_PyObject a
 	err = QPy_MapAsDict(self, arg);
     else
 	err = QPyDict_IterAsDict(self, arg); // fallback! slow iteration over arg (we treat arg as an iterator)
- 
+
     if (err || QPy_PyDictAsDict(self, kwargs) < 0)
 	return QPy_Err;
     return err;
