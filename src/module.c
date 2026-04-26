@@ -128,6 +128,36 @@ QPy_INLINE(int) QPy_MappingCheck(const QPy_PyObject arg)
     return PyObject_HasAttrString(arg, "keys");
 }
 
+static int QPy_FormatErrorNote(void *fmt, ...)
+{
+    QPy_PyObject note, methname;
+    va_list vargs;
+    // since python >=3.11: Exception classes inherit the new add_note method from the BaseException class
+    methname = PyUnicode_FromString("add_note"); // TODO: make a global object
+    if (NULL == methname)
+	return QPy_Err;
+
+    va_start(vargs, fmt);
+    note = PyUnicode_FromFormatV(fmt, vargs);
+    va_end(vargs);
+    if (NULL == note)
+	{
+	    Py_DECREF(methname);
+	    return QPy_Err;
+	}
+
+    QPy_PyObject exc = PyErr_GetRaisedException();
+    int err          = PyObject_CallMethodOneArg(exc, methname, note) < 0;
+
+    if (0 != err)
+	Py_DECREF(exc);
+
+    PyErr_SetRaisedException(exc);
+    Py_DECREF(methname);
+    Py_DECREF(note);
+    return -err;
+}
+
 QPy_INLINE(int) QPy_GetSizeFromArgKwargs(const QPy_PyObject restrict arg, const QPy_PyObject restrict kwargs)
 {
     QPy_ssize_t as = 0, ks = 0, t = 0;
@@ -166,7 +196,7 @@ QPy_INLINE(int) QPy_PyDictAsDict(QPyDictObject *self, QPy_PyObject arg)
 
 QPy_PTR_INLINE(int) QPy_FromPairs_MapAsDict(QPyDictObject *self, QPy_PyObject arg)
 {
-    QPy_PyObject _items = PySequence_Fast(PyMapping_Items(arg));
+    QPy_PyObject _items = PyMapping_Items(arg);
 
     if (NULL == _items)
         return QPy_Err;
@@ -197,7 +227,7 @@ QPy_PTR_INLINE(int) QPy_FromPairs_MapAsDict(QPyDictObject *self, QPy_PyObject ar
 
 QPy_PTR_INLINE(int) QPy_FromKeys_MapAsDict(QPyDictObject *self, QPy_PyObject arg)
 {
-    QPy_PyObject _keys = PySequence_Fast(PyMapping_Keys(arg));
+    QPy_PyObject _keys = PyMapping_Keys(arg);
 
     if (NULL == _keys)
         return QPy_Err;
@@ -259,13 +289,13 @@ int QPyDict_IterAsDict(QPyDictObject *self, QPy_PyObject arg)
 
             if (NULL != pair)
                 {
-                    PyErr_Format(PyExc_ValueError, "dictionary update sequence element #%z has length %z; 2 is required", i, PySequence_Fast_GET_SIZE(pair));
+                    PyErr_Format(PyExc_ValueError, "dictionary update sequence element #%zd has length %zd; 2 is required", i, PySequence_Fast_GET_SIZE(pair));
                     Py_DECREF(pair);
                     Py_DECREF(iter);
                     return QPy_Err;
                 }
             if (PyErr_ExceptionMatches(PyExc_TypeError))
-                PyErr_Format("Cannot convert dictionary update sequence element #%z to a sequence", i);
+		QPy_FormatErrorNote("Cannot convert dictionary update sequence element #%zd to a sequence", i);
             Py_DECREF(iter);
             return QPy_Err;
         }

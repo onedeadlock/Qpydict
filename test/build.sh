@@ -2,7 +2,7 @@
 
 VENV="." # set venv path here
 
-VENV_BIN="Scripts" # on windows the executables reside in venv/Scripts (using git-bash)
+VENV_BIN="bin" # on windows the executables reside in venv/Scripts (using git-bash)
 
 echo -e "\n\nexecuting $HOME/Qpydict/setup.py with $HOME/$VENV/$VENV_BIN/python\n\n"
 
