@@ -163,11 +163,11 @@ QPy_INLINE(int) QPy_GetSizeFromArgKwargs(const QPy_PyObject restrict arg, const 
     QPy_ssize_t as = 0, ks = 0, t = 0;
 
     if (NULL != arg
-        && (t = QPy_GetCommonObjectSize(arg, &as, QPy_ALL)) < 0)
-	    return QPy_Err;
+	&& (t = QPy_GetCommonObjectSize(arg, &as, QPy_ALL)) < 0)
+	return QPy_Err;
     if (NULL != kwargs)
-        QPy_GetCommonObjectSize(arg, &ks, QPy_MAP);
-
+	QPy_GetCommonObjectSize(kwargs, &ks, QPy_MAP);
+ 
     return (t & QPy_LONG) && (ks <= as) ? as : (as + ks);
 }
 
@@ -175,9 +175,6 @@ QPy_INLINE(int) QPy_PyDictAsDict(QPyDictObject *self, QPy_PyObject arg)
 {
     QPy_PyObject key, value;
     QPy_ssize_t  pos = 0, err = 0;
-
-    if (NULL == arg)
-        return 0;
 
     while (err == 0 && PyDict_Next(arg, &pos, &key, &value))
         {
@@ -261,7 +258,7 @@ QPy_INLINE(int) QPy_MapAsDict(QPyDictObject *self, QPy_PyObject arg)
 int QPyDict_IterAsDict(QPyDictObject *self, QPy_PyObject arg)
 {
     QPy_PyObject iter, item = NULL;
-
+    
     iter = PyObject_GetIter(arg);
     if (iter == NULL)
         return QPy_Err;
@@ -314,16 +311,19 @@ QPy_INLINE(int) QPy_UpdateDict_FromArgKwargs(QPyDictObject *self, QPy_PyObject a
 {
     int err = 0;
 
-    // fast path if argument is of dict type
-    if (PyDict_CheckExact(arg))
-        err = QPy_PyDictAsDict(self, arg);
-    else if (QPy_MappingCheck(arg))
-        err = QPy_MapAsDict(self, arg);
-    else
-        err = QPyDict_IterAsDict(self, arg); // fallback! slow iteration over arg (we treat arg as an iterator)
+    if (NULL != arg)
+	{
+	    // fast path if argument is of dict type
+	    if (PyDict_CheckExact(arg))
+	    	err = QPy_PyDictAsDict(self, arg);
+	    if (QPy_MappingCheck(arg))
+		err = QPy_MapAsDict(self, arg);
+	    else
+		err = QPyDict_IterAsDict(self, arg); // fallback! slow iteration over arg (we treat arg as an iterator)
+	}
+    if (NULL != kwargs && 0 == err)
+	err = QPy_PyDictAsDict(self, kwargs);
 
-    if (err || QPy_PyDictAsDict(self, kwargs) < 0)
-        return QPy_Err;
     return err;
 }
 
@@ -347,6 +347,7 @@ static int QPyDict_init(QPy_PyObject _self, QPy_PyObject arg, QPy_PyObject kwarg
     // Allocate memory for entries
     size = QPy_GetSizeFromArgKwargs(pos_arg, kwargs);
     self = (QPyDictObject *)_self;
+
     if (QPy_CustomInit(self, size) < 0)
 	    return QPy_Err;
 
