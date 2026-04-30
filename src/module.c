@@ -1,23 +1,5 @@
 #include "module.h"
-
-#define QPy_PTR_INLINE(type) __attribute__((nonnull, always_inline)) static inline type
-#define QPy_INLINE(type)     __attribute__((always_inline))         static inline type
-#define QPy_LIKELY(expr)     __builtin_expect(!!(expr), 1)
-#define QPy_UNLIKELY(expr)   __builtin_expect(!!(expr), 0)
-#define QPy_SETVAL(lv, rv)      ((lv) = (rv))
-#define QPy_SETEXC(type, msg)   (PyErr_SetString(type, msg), QPy_Err)
-#define QPy_RAISE_BADARG(msg)   QPy_SETEXC(PyExc_TypeError, msg)
-#define QPy_RAISE_OVERFLOW(msg) QPy_SETEXC(PyExc_OverflowError, msg)
-// qpy-iter-next: return 0 for success else 1
-#define QPy_ITERNEXT(iter, arg) QPy_SETVAL(*arg, PyIter_Next(iter)) // TODO: use PyIter_NextItem for python>=3.14
-#define QPy_TUPLE_GETITEM(tuple, item, i) !(item = PyTuple_GetItem(tuple, i))
-
-#define QPy_CACHE(self)   ((self)->cache)
-#define QPy_ENTRIES(self) ((self)->entries)
-#define QPy_SIZE(self)    ((self)->nentries)
-#define QPy_LEN(self)     ((self)->used_entries)
-#define QPy_GSIZE(self)   ((self)->group_size)
-#define QPy_TMPCACHE(self)    NULL
+#include "internal/include/defs.h"
 
 enum {
     QPy_Err      = -1,
@@ -74,17 +56,6 @@ static void QPy_free(void *ptr)
 
 __attribute__((unused)) static void QPy_aligned_free(void * QPy_UNUSED(ptr))
 {
-}
-
-QPy_PTR_INLINE(int) QPy_GetCommonObjectSize(QPy_PyObject arg, QPy_ssize_t *size, int op)
-{
-    if ((op & QPy_LONG) && PyLong_Check(arg))
-        {
-            QPy_ssize_t _size = PyLong_AsSsize_t(arg);
-            return _size < 0 ? QPy_Err : (QPy_SETVAL(*size, _size), QPy_LONG);
-        }
-    QPy_SETVAL(*size, PyObject_LengthHint(arg, QPy_DEFAULT_SIZE));
-    return (QPy_ALL & ~QPy_LONG);
 }
 
 QPy_INLINE(void *) QPy_ClearObject(QPyDictObject *self)
@@ -160,15 +131,15 @@ static int QPy_FormatErrorNote(void *fmt, ...)
 
 QPy_INLINE(int) QPy_GetSizeFromArgKwargs(const QPy_PyObject restrict arg, const QPy_PyObject restrict kwargs)
 {
-    QPy_ssize_t as = 0, ks = 0, t = 0;
+    QPy_ssize_t as = 0, ks = 0;
 
-    if (NULL != arg
-	&& (t = QPy_GetCommonObjectSize(arg, &as, QPy_ALL)) < 0)
-	return QPy_Err;
+    if (NULL != arg)
+	as = PyObject_LengthHint(arg, 32);
+
     if (NULL != kwargs)
-	QPy_GetCommonObjectSize(kwargs, &ks, QPy_MAP);
- 
-    return (t & QPy_LONG) && (ks <= as) ? as : (as + ks);
+	ks = PyDict_Size(kwargs);
+
+    return ks + as;
 }
 
 QPy_INLINE(int) QPy_PyDictAsDict(QPyDictObject *self, QPy_PyObject arg)
@@ -312,17 +283,16 @@ QPy_INLINE(int) QPy_UpdateDict_FromArgKwargs(QPyDictObject *self, QPy_PyObject a
     int err = 0;
 
     if (NULL != arg)
-	{
-	    // fast path if argument is of dict type
+    	{
 	    if (PyDict_CheckExact(arg))
 	    	err = QPy_PyDictAsDict(self, arg);
-	    if (QPy_MappingCheck(arg))
+	    else if (QPy_MappingCheck(arg))
 		err = QPy_MapAsDict(self, arg);
 	    else
-		err = QPyDict_IterAsDict(self, arg); // fallback! slow iteration over arg (we treat arg as an iterator)
+		err = QPyDict_IterAsDict(self, arg);
 	}
     if (NULL != kwargs && 0 == err)
-	err = QPy_PyDictAsDict(self, kwargs);
+    	err = QPy_PyDictAsDict(self, kwargs);
 
     return err;
 }
@@ -337,7 +307,7 @@ static int QPyDict_init(QPy_PyObject _self, QPy_PyObject arg, QPy_PyObject kwarg
 {
     QPy_PyObject   pos_arg;
     QPyDictObject *self;
-    QPy_ssize_t    size;
+    QPy_ssize_t    size=0;
 
     if (QPy_TUPLE_GETITEM(arg, pos_arg, 0))
         PyErr_Clear();
@@ -345,19 +315,19 @@ static int QPyDict_init(QPy_PyObject _self, QPy_PyObject arg, QPy_PyObject kwarg
         return 0;
 
     // Allocate memory for entries
-    size = QPy_GetSizeFromArgKwargs(pos_arg, kwargs);
     self = (QPyDictObject *)_self;
+    size = QPy_GetSizeFromArgKwargs(pos_arg, kwargs);
 
     if (QPy_CustomInit(self, size) < 0)
-	    return QPy_Err;
-
+	return QPy_Err;
+    
     // Insert entries into dict
     if (QPy_UpdateDict_FromArgKwargs(self, pos_arg, kwargs))
         {
             // error! Deep clean dict
             QPy_ClearEntries(self);
             return QPy_Err;
-        }
+	}
     return 0;
 }
 

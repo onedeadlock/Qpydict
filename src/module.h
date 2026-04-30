@@ -2,6 +2,7 @@
 #define QPYDICT_MODULE_H
 #include "internal/include/types.h"
 #include "internal/include/methods.h"
+#include "internal/include/defs.h"
 
 #define QPy_class_qualname  "Qpydict.qpydict"
 #define QPy_class_name      "qpydict"
