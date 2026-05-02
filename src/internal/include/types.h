@@ -22,7 +22,7 @@ typedef Py_hash_t  QPy_hash_t;
 
 // Internal Types
 typedef struct {
-    uint8_t cache;
+    uint8_t cache[1];
 } QPyDict_Cache_;
 
 typedef struct {
