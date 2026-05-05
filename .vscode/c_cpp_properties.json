@@ -1,0 +1,19 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "/lib/python3",
+                "/usr/local/python/3.12.1/include/python3.12",
+                "/usr/local/python/3.12.1/include/python3.12"
+            ],
+            "defines": [],
+            "compilerPath": "/usr/bin/gcc-13",
+            "cStandard": "c17",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "${default}"
+        }
+    ],
+    "version": 4
+}

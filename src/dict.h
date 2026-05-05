@@ -1,12 +1,15 @@
 #ifndef QPy_DICT_H
 #define QPy_DICT_H
 #include <stdbool.h>
-#include "internal/include/def.h"
+#include "internal/include/defs.h"
 #include "internal/include/types.h"
+#include "internal/include/arch_arm.h"
+#include "internal/include/arch_i386.h"
+#include "internal/include/arch_generic.h"
 
 #define QPy_cache_tag_(v) ((v) - ((v) * 0x2041u >> 20) * 127) + 1
 
-QPy_INLINE(int) QPy_generic_compare(const QPy_Array arr, const PyObject *key, const QPy_hash_t hash)
+QPy_INLINE(int) QPy_generic_compare(const QPyDict_Array it, const QPy_PyObject key, const QPy_hash_t hash)
 {
     int cmp;
 
