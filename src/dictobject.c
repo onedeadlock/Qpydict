@@ -1,5 +1,5 @@
 #include "module.h"
-#include "internal/include/defs.h"
+#include "include/defs.h"
 
 enum {
     QPy_Err      = -1,
@@ -9,31 +9,6 @@ enum {
     QPy_ITER     = 0x08,
     QPy_ALL      = 0x0f
 };
-
-static QPy_PyObject version(QPy_PyObject QPy_UNUSED(module), QPy_PyObject QPy_UNUSED(arg))
-{
-    Py_INCREF(Py_None);
-    return Py_None;
-}
-
-static int Qpydict_module_exec(QPy_PyObject module)
-{
-    // Create, initialize and add class to the module's namespace
-    QPy_PyObject cls = PyType_FromModuleAndSpec(module, &QPyDict_clsspec, NULL);
-
-    if (NULL == cls || PyModule_AddObject(module, QPy_class_name, cls) < 0)
-        {
-            Py_XDECREF(cls);
-            return QPy_Err;
-        }
-    return 0;
-}
-
-PyMODINIT_FUNC PyInit_Qpydict(void)
-{
-    return PyModuleDef_Init(&Qpydict_Module);
-}
-
 
 static void * QPy_malloc(QPy_ssize_t size, void *ptr)
 {

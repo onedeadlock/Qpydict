@@ -30,15 +30,24 @@ extern inline __forceinline uint64_t QPy_BSR(const uint64_t v)
 #else
 // TODO: implement fallback for BSR
 #endif
-
-// Scan mask
-#define QPy_scan_mask(v) QPy_FIXIDX(QPy_BSR(v))
+#define QPy_SCAN_MASK(v) QPy_FIXIDX(QPy_BSR(v))
 
 // Round up/down to a multiple of 2^d
-#define QPy_RNDDOWN(v, d) ((v) - ((v) & (d)))
-#define QPy_RNDUP(v,  u)  (((n) + (u) - 1) & ~((u) - 1))
+#define QPy_ALIGN(v, d)  ((v) - ((v) & (d)))
+#define QPy_ALIGNU(v, d) (((n) + (d) - 1) & ~((d) - 1))
 
-// Intrinsics
+#if QPy_ALIGNED_LOAD
+#    define QPy_LOADALIGN(v) QPy_ALIGN(v, QPy_PWGROUP)
+#else
+#    define QPy_LOADALIGN(v) (v)
+#endif
+
+// Group properties (all properties of group are in powers of 2)
+#define QPy_GROUP       QPy_NGROUP // sizeof group
+#define QPy_GROUP_PS    QPy_PWGROUP // log2 sizeof group
+#define QPy_DIVGROUP(v) ((v) >> GROUP_PS) // v / sizeof group
+
+// Compiler Intrinsics
 #if defined(QPy_GCL_CC) || defined(QPy_INTEL_CC)
 #    define QPy_PTR_INLINE(type) __attribute__((nonnull, always_inline)) static inline type
 #    define QPy_INLINE(type)     __attribute__((always_inline))         static inline type

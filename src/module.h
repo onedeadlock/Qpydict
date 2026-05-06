@@ -1,8 +1,8 @@
 #ifndef QPYDICT_MODULE_H
 #define QPYDICT_MODULE_H
-#include "internal/include/types.h"
-#include "internal/include/methods.h"
-#include "internal/include/defs.h"
+#include "include/types.h"
+#include "include/methods.h"
+#include "include/defs.h"
 
 #define QPy_class_qualname  "Qpydict.qpydict"
 #define QPy_class_name      "qpydict"
@@ -91,5 +91,29 @@ static PyModuleDef Qpydict_Module = {
     .m_methods    = Qpydict_module_methods,
     .m_slots      = Qpydict_module_slots,
 };
+
+static QPy_PyObject version(QPy_PyObject QPy_UNUSED(module), QPy_PyObject QPy_UNUSED(arg))
+{
+    Py_INCREF(Py_None);
+    return Py_None;
+}
+
+static int Qpydict_module_exec(QPy_PyObject module)
+{
+    // Create, initialize and add class to the module's namespace
+    QPy_PyObject cls = PyType_FromModuleAndSpec(module, &QPyDict_clsspec, NULL);
+
+    if (NULL == cls || PyModule_AddObject(module, QPy_class_name, cls) < 0)
+        {
+            Py_XDECREF(cls);
+            return QPy_Err;
+        }
+    return 0;
+}
+
+PyMODINIT_FUNC PyInit_Qpydict(void)
+{
+    return PyModuleDef_Init(&Qpydict_Module);
+}
 
 #endif //QPydict_MODULE_H

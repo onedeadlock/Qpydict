@@ -1,15 +1,17 @@
 #ifndef QPy_DICT_H
 #define QPy_DICT_H
 #include <stdbool.h>
-#include "internal/include/defs.h"
-#include "internal/include/types.h"
-#include "internal/include/arch_arm.h"
-#include "internal/include/arch_i386.h"
-#include "internal/include/arch_generic.h"
+#include "include/defs.h"
+#include "include/types.h"
+#include "include/arch_arm.h"
+#include "include/arch_i386.h"
+#include "include/arch_generic.h"
 
+#define QPy_INCR(d)       ++(d->used_entries)
 #define QPy_cache_tag_(v) ((v) - ((v) * 0x2041u >> 20) * 127) + 1
+#define QPy_place_in_group(v) (QPy_DIVGROUP(QPy_ALIGN(v)))
 
-QPy_INLINE(int) QPy_generic_compare(const QPyDict_Array it, const QPy_PyObject key, const QPy_hash_t hash)
+QPy_INLINE(int) generic_compare(const QPyDict_Array it, const QPy_PyObject key, const QPy_hash_t hash)
 {
     int cmp;
 
@@ -25,20 +27,20 @@ QPy_INLINE(int) QPy_generic_compare(const QPyDict_Array it, const QPy_PyObject k
     return cmp;
 }
 
-QPy_PTR_INLINE(int) QPy_lookup_generic_nodeleted(QPyDictObject *self, QPy_PyObject key, QPy_PyObject value)
+QPy_PTR_INLINE(int) insert_generic_nodeleted(QPyDictObject *self, QPy_PyObject key, QPy_PyObject value)
 {
-    const size_t group_idx = QPy_align_size(hash & self->nentries - 1);
+    const size_t group_idx = QPy_place_in_group(hash & self->nentries - 1);
     const QPy_hash_t hash  = PyObject_hash(key);
     const uint8_t  tag     = QPy_cache_tag_(hash);
     const QPy_mm_t dup     = QPy_mm_duplicate(tag);
     
-    QPy_ssize_t probe=0, cnt=0;
+    size_t probe=0, cnt=0;
 
     if (hash < 0)
 	return -1;
 
     while (true) {
-	QPy_ssize_t i    = (probe + group_idx) & (self->group_size - 1);
+	size_t i         = (probe + group_idx) & (self->group_size - 1);
 	QPy_mm_t   group = QPy_mm_load(self->cache + i);
 	QPy_mask_t mask  = QPy_mm_test_equal(group, dup);
 
@@ -46,19 +48,19 @@ QPy_PTR_INLINE(int) QPy_lookup_generic_nodeleted(QPyDictObject *self, QPy_PyObje
 	     mask &= mask - 1)
 	    {
 		int j   = QPy_scan_mask(mask);
-		int cmp = QPy_generic_compare(it+j, key, hash);
+		int cmp = generic_compare(it+j, key, hash);
 		if (QPy_UNLIKELY(cmp < 0))
 		    return -1;
 		if (cmp)
-		    return QPy_update_dict(self, key, value, hash, tag, j);
+		    return dict_update(self, key, value, hash, tag, j);
 	    }
 
 	mask = QPy_mm_test_equal(group, _QPy_ZERO);
 	if (mask)
 	    {
 		int k = QPy_scan_mask(mask);
-		self->used_entries += 1;
-		return QPy_update_dict(self, key, value, hash, tag, k);
+		QPy_INCR(self);
+		return dict_update(self, key, value, hash, tag, k);
 	    }
 	probe += (cnt++) + 1;
     }
@@ -71,13 +73,13 @@ QPy_PTR_INLINE(int) QPy_lookup_generic(QPyDictObject *self, QPy_PyObject key, QP
     const uint8_t  tag     = QPy_cache_tag_(hash);
     const QPy_mm_t dup     = QPy_mm_duplicate(tag);
     
-    QPy_ssize_t probe=0, cnt=0, k=-1;
+    size_t probe=0, cnt=0; ssize_t k=-1;
 
     if (hash < 0)
 	return -1;
 
     while (true) {
-	QPy_ssize_t i    = (probe + group_idx) & (self->group_size - 1);
+	size_t i         = (probe + group_idx) & (self->group_size - 1);
 	QPy_mm_t   group = QPy_mm_load(self->cache + i);
 	QPy_mask_t mask  = QPy_mm_test_equal(group, dup);
 
@@ -85,11 +87,11 @@ QPy_PTR_INLINE(int) QPy_lookup_generic(QPyDictObject *self, QPy_PyObject key, QP
 	     mask &= mask - 1)
 	    {
 		int j   = QPy_scan_mask(mask);
-		int cmp = QPy_generic_compare(it+j, key, hash);
+		int cmp = generic_compare(it+j, key, hash);
 		if (QPy_UNLIKELY(cmp < 0))
 		    return -1;
 		if (cmp)
-		    return QPy_update_dict(self, key, value, hash, tag, j);
+		    return dict_update(self, key, value, hash, tag, j);
 	    }
 	if (k < 0)
 	    k = QPy_find_empty_slot(group);
@@ -101,9 +103,10 @@ QPy_PTR_INLINE(int) QPy_lookup_generic(QPyDictObject *self, QPy_PyObject key, QP
     }
     if (k != -1)
 	{
-	    self->used_entries += 1;
-	    return QPy_update_dict(self, key, value, hash, tag, k);
+	    QPy_INCR(self);
+	    return dict_update(self, key, value, hash, tag, k);
 	}
+    // unreachable
     return -1;
 }
 
