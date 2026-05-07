@@ -9,6 +9,25 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <inttypes.h>
+#include "mm.h"
+
+#ifndef QPy_MM_UNSUPPROTED
+#   ifdef QPy_MM_SSE
+#       if QPy_NGROUP == 32
+            typedef __m256i mm_t; 
+#       else
+            typedef __m128i mm_t;
+#       endif
+#   elif QPy_MM_NEON
+#       ifdef QPy_NGROUP == 16
+            typedef uint8x16_t mm_t;
+#       else
+            typedef uint8x8_t mm_t;
+#       endif
+#   else
+        typedef uint64_t mm_t;
+#   endif
+#endif
 
 #define QPy_UNUSED(x)    Py_UNUSED(x)
 #define QPy_T_SSIZE      Py_T_PYSSIZET

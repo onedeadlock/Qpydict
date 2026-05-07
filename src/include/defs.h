@@ -45,12 +45,12 @@ extern inline __forceinline uint64_t QPy_BSR(const uint64_t v)
 // Group properties (all properties of group are in powers of 2)
 #define QPy_GROUP       QPy_NGROUP // sizeof group
 #define QPy_GROUP_PS    QPy_PWGROUP // log2 sizeof group
-#define QPy_DIVGROUP(v) ((v) >> GROUP_PS) // v / sizeof group
+#define QPy_DIVGROUP(v) ((v) >> QPy_GROUP_PS) // v / sizeof group
 
 // Compiler Intrinsics
 #if defined(QPy_GCL_CC) || defined(QPy_INTEL_CC)
 #    define QPy_PTR_INLINE(type) __attribute__((nonnull, always_inline)) static inline type
-#    define QPy_INLINE(type)     __attribute__((always_inline))         static inline type
+#    define QPy_INLINE(type)     __attribute__((always_inline))          static inline type
 #    define QPy_LIKELY(expr)     __builtin_expect(!!(expr), 1)
 #    define QPy_UNLIKELY(expr)   __builtin_expect(!!(expr), 0)
 #else

@@ -3,14 +3,13 @@
 #include <stdbool.h>
 #include "include/defs.h"
 #include "include/types.h"
-#include "include/arch_arm.h"
-#include "include/arch_i386.h"
-#include "include/arch_generic.h"
+#include "include/mm.h"
+#ifndef QPy_MM_UNSUPPORTED
 
 #define QPy_INCR(d)       ++(d->used_entries)
-#define place_in_group(v) (QPy_DIVGROUP(QPy_ALIGN(v)))
+#define place_in_group(v) (QPy_DIVGROUP(QPy_ALIGN(v, QPy_GROUP_PS)))
 
-QPy_INLINE(int) QPy_FN_PURE cache_tag(const uint64_t v)
+QPy_INLINE(int) cache_tag(const uint64_t v)
 {
     return ((v & 0xff) - ((v & 0xff) * 0x2041u >> 20) * 127) + 1;
 }
@@ -33,10 +32,10 @@ QPy_INLINE(int) generic_compare(const QPyDict_Array it, const QPy_PyObject key, 
 
 QPy_PTR_INLINE(int) insert_generic_nodeleted(QPyDictObject *self, QPy_PyObject key, QPy_PyObject value)
 {
-    const size_t group_idx = QPy_place_in_group(hash & self->nentries - 1);
-    const QPy_hash_t hash  = PyObject_hash(key);
+    const QPy_hash_t hash  = PyObject_Hash(key);
+    const size_t group_idx = place_in_group(hash & self->nentries - 1);
     const uint8_t  tag     = cache_tag(hash);
-    const QPy_mm_t dup     = mm_duplicate(tag);
+    const mm_t dup         = mm_duplicate(tag);
     
     size_t probe=0, cnt=0;
 
@@ -45,14 +44,15 @@ QPy_PTR_INLINE(int) insert_generic_nodeleted(QPyDictObject *self, QPy_PyObject k
 
     while (true) {
 	size_t i         = (probe + group_idx) & (self->group_size - 1);
-	QPy_mm_t   group = mm_load(self->cache + i);
-	QPy_mask_t mask  = mm_test_equal(group, dup);
+	mm_t   group = mm_load(self->cache + i);
+	mask_t mask  = mm_test_equal(group, dup);
 
 	for (QPyDict_Array it = self->entries + i; mask;
 	     mask &= mask - 1)
 	    {
 		int j   = mm_scan_mask(mask);
 		int cmp = generic_compare(it+j, key, hash);
+		
 		if (QPy_UNLIKELY(cmp < 0))
 		    return -1;
 		if (cmp)
@@ -73,10 +73,10 @@ QPy_PTR_INLINE(int) insert_generic_nodeleted(QPyDictObject *self, QPy_PyObject k
 
 QPy_PTR_INLINE(int) QPy_lookup_generic(QPyDictObject *self, QPy_PyObject key, QPy_PyObject value)
 {
+    const hash_t hash      = PyObject_Hash(key);
     const size_t group_idx = place_in_group(hash & self->nentries - 1);
-    const QPy_hash_t hash  = PyObject_hash(key);
     const uint8_t  tag     = cache_tag(hash);
-    const QPy_mm_t dup     = mm_duplicate(tag);
+    const mm_t dup         = mm_duplicate(tag);
     
     size_t probe=0, cnt=0; ssize_t k=-1;
 
@@ -85,8 +85,8 @@ QPy_PTR_INLINE(int) QPy_lookup_generic(QPyDictObject *self, QPy_PyObject key, QP
 
     while (true) {
 	size_t i         = (probe + group_idx) & (self->group_size - 1);
-	QPy_mm_t   group = mm_load(self->cache + i);
-	QPy_mask_t mask  = mm_test_equal(group, dup);
+	mm_t   group = mm_load(self->cache + i);
+	mask_t mask  = mm_test_equal(group, dup);
 
 	for (QPyDict_Array it = self->entries + i; mask;
 	     mask &= mask - 1)
@@ -114,4 +114,6 @@ QPy_PTR_INLINE(int) QPy_lookup_generic(QPyDictObject *self, QPy_PyObject key, QP
     QPy_UNREACHABLE();
 }
 
+#else // QPy_MM_UNSUPPORTED
+#    error
 #endif
