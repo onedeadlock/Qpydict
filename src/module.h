@@ -9,20 +9,20 @@
 #define Qpydict_module_name "Qpydict"
 #define Qpydict_module_doc  "A very fast Python dictionary"
 
-static int Qpydict_module_exec(QPy_PyObject module);
-static QPy_PyObject version(QPy_PyObject module, QPy_PyObject arg);
+static int Qpydict_module_exec(PyObject *module);
+static PyObject *version(PyObject *module, PyObject *arg);
 
 // Initialization
-static QPy_PyObject QPyDict_new(PyTypeObject *cls, QPy_PyObject args, QPy_PyObject kwds);
-static int QPyDict_init(QPy_PyObject _self, QPy_PyObject args, QPy_PyObject kwds);
-static void QPyDict_dealloc(QPy_PyObject _self);
-static int QPyDict_traverse(QPy_PyObject _self, visitproc visit, void *arg);
+static PyObject *QPyDict_new(PyTypeObject *cls, PyObject *args, PyObject *kwds);
+static int QPyDict_init(PyObject *_self, PyObject *args, PyObject *kwds);
+static void QPyDict_dealloc(PyObject *_self);
+static int QPyDict_traverse(PyObject *_self, visitproc visit, void *arg);
 
 // Class Methods
-QPy_PyObject QPyDict_Clear(QPy_PyObject self);
-QPy_PyObject QPyDict_Contains(QPy_PyObject self, QPy_PyObject arg);
-QPy_PyObject QPyDict_SetItem(QPy_PyObject self, QPy_PyObject args, QPy_PyObject kwargs);
-QPy_PyObject QPyDict_GetItem(QPy_PyObject self, QPy_PyObject args);
+PyObject *QPyDict_Clear(PyObject *self);
+PyObject *QPyDict_Contains(PyObject *self, PyObject *arg);
+PyObject *QPyDict_SetItem(PyObject *self, PyObject *args, PyObject *kwargs);
+PyObject *QPyDict_GetItem(PyObject *self, PyObject *args);
 
 static PyMemberDef QPyDict_attr[] = {
     {
@@ -92,16 +92,16 @@ static PyModuleDef Qpydict_Module = {
     .m_slots      = Qpydict_module_slots,
 };
 
-static QPy_PyObject version(QPy_PyObject QPy_UNUSED(module), QPy_PyObject QPy_UNUSED(arg))
+static PyObject *version(PyObject *QPy_UNUSED(module), PyObject *QPy_UNUSED(arg))
 {
     Py_INCREF(Py_None);
     return Py_None;
 }
 
-static int Qpydict_module_exec(QPy_PyObject module)
+static int Qpydict_module_exec(PyObject *module)
 {
     // Create, initialize and add class to the module's namespace
-    QPy_PyObject cls = PyType_FromModuleAndSpec(module, &QPyDict_clsspec, NULL);
+    PyObject *cls = PyType_FromModuleAndSpec(module, &QPyDict_clsspec, NULL);
 
     if (NULL == cls || PyModule_AddObject(module, QPy_class_name, cls) < 0)
         {

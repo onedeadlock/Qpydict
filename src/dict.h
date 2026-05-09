@@ -14,7 +14,7 @@ QPy_INLINE(int) cache_tag(const uint64_t v)
     return ((v & 0xff) - ((v & 0xff) * 0x2041u >> 20) * 127) + 1;
 }
 
-QPy_INLINE(int) generic_compare(const QPyDict_Array it, const QPy_PyObject key, const QPy_hash_t hash)
+QPy_INLINE(int) generic_compare(const khpair_t it, const PyObject *key, const QPy_hash_t hash)
 {
     int cmp;
 
@@ -30,7 +30,7 @@ QPy_INLINE(int) generic_compare(const QPyDict_Array it, const QPy_PyObject key, 
     return cmp;
 }
 
-QPy_PTR_INLINE(int) insert_generic_nodeleted(QPyDictObject *self, QPy_PyObject key, QPy_PyObject value)
+QPy_PTR_INLINE(int) insert_generic_nodeleted(QPyDictObject *self, PyObject *key, PyObject *value)
 {
     const QPy_hash_t hash  = PyObject_Hash(key);
     const size_t group_idx = place_in_group(hash & self->nentries - 1);
@@ -47,7 +47,7 @@ QPy_PTR_INLINE(int) insert_generic_nodeleted(QPyDictObject *self, QPy_PyObject k
 	mm_t   group = mm_load(self->cache + i);
 	mask_t mask  = mm_test_equal(group, dup);
 
-	for (QPyDict_Array it = self->entries + i; mask;
+	for (khpair_t it = self->entries + i; mask;
 	     mask &= mask - 1)
 	    {
 		int j   = mm_scan_mask(mask);
@@ -71,7 +71,7 @@ QPy_PTR_INLINE(int) insert_generic_nodeleted(QPyDictObject *self, QPy_PyObject k
     QPy_UNREACHABLE();
 }
 
-QPy_PTR_INLINE(int) QPy_lookup_generic(QPyDictObject *self, QPy_PyObject key, QPy_PyObject value)
+QPy_PTR_INLINE(int) QPy_lookup_generic(QPyDictObject *self, PyObject *key, PyObject *value)
 {
     const hash_t hash      = PyObject_Hash(key);
     const size_t group_idx = place_in_group(hash & self->nentries - 1);
@@ -88,7 +88,7 @@ QPy_PTR_INLINE(int) QPy_lookup_generic(QPyDictObject *self, QPy_PyObject key, QP
 	mm_t   group = mm_load(self->cache + i);
 	mask_t mask  = mm_test_equal(group, dup);
 
-	for (QPyDict_Array it = self->entries + i; mask;
+	for (khpair_t it = self->entries + i; mask;
 	     mask &= mask - 1)
 	    {
 		int j   = mm_scan_mask(mask);
