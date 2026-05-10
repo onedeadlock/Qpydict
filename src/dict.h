@@ -41,23 +41,39 @@ QPy_INLINE(int) key_generic_compare(const khpair_t it, const PyObject *key, cons
     return cmp;
 }
 
-QPy_INLINE(int) dict_update_key_in_entry(QPyDictObject *self, PyObject * restrict key, PyObject * restrict value, ssize_t j)
+QPy_INLINE(int) dict_update_key_in_entry(QPyDictObject *self, PyObject *restrict key, PyObject *restrict value, ssize_t j)
 {
-    Py_DECREF(key);
-    // TODO
+    PyObject *tmp = self->entries.values[j];
+
+    self->entries.values[j] = value;
+    Py_XDECREF(tmp);
+
+    // key already exist in dict so no use here
+    Py_XDECREF(key);
     return 0;
 }
 
-dict_add_entry(QPyDictObject *self, PyObject * restrict key, PyObject * restrict value, hash_t hash, ssize_t tag, ssize_t j)
+dict_add_entry(QPyDictObject *self, PyObject *restrict key, PyObject *restrict value, hash_t hash, ssize_t tag, ssize_t j)
 {
-    // TODO
+    entry_t entries = self->entries;
+
+    assert(j * QPy_GROUP <= self->capacity);
+    assert(NULL == entries.values[j]);
+    assert(NULL == entries.kh[j].key);
+
+    entries.cache[j]  = tag;
+    entries.values[j] = value;
+
+    entries.kh[j].key  = key;
+    entries.kh[j].hash = hash;
+
     inc_entry_size(self);
     return 0;
 }
 
-QPy_PTR_INLINE(ssize_t) lookup_insert_generic_nodeleted(QPyDictObject *self, PyObject * restrict key, PyObject * restrict value)
+QPy_PTR_INLINE(ssize_t) lookup_insert_generic_nodeleted(QPyDictObject *self, PyObject *restrict key, PyObject *restrict value)
 {
-    const QPy_hash_t hash  = PyObject_Hash(key);
+    const hash_t hash  = PyObject_Hash(key);
 
     if (hash < 0)
 	return -1;
@@ -94,7 +110,7 @@ QPy_PTR_INLINE(ssize_t) lookup_insert_generic_nodeleted(QPyDictObject *self, PyO
     QPy_UNREACHABLE();
 }
 
-QPy_PTR_INLINE(ssize_t) lookup_insert_generic(QPyDictObject *self, PyObject * restrict key, PyObject * restrict value)
+QPy_PTR_INLINE(ssize_t) lookup_insert_generic(QPyDictObject *self, PyObject *restrict key, PyObject *restrict value)
 {
     const hash_t hash      = PyObject_Hash(key);
 

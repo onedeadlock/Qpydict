@@ -28,7 +28,7 @@ typedef struct {
 typedef struct {
     struct {
 	uint8_t  *cache;
-	PyObject *value;
+	PyObject *values;
     };
     khpair_t *kh; // key & value pair
     uint8_t  *kind; // kind of keys in dict
