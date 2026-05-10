@@ -20,18 +20,16 @@ typedef PyObject * QPy_PyObject;
 typedef Py_ssize_t QPy_ssize_t;
 typedef Py_hash_t  QPy_hash_t;
 
-tyoedef struct {
-    uint8_t  *cache;
-    PyObject *value;
-} vcache_t;
-
 typedef struct {
     PyObject *key;
     hash_t   hash;
 } khpair_t;
 
 typedef struct {
-    vcache_t vc;  // value and cache array
+    struct {
+	uint8_t  *cache;
+	PyObject *value;
+    };
     khpair_t *kh; // key & value pair
     uint8_t  *kind; // kind of keys in dict
 } entry_t;
