@@ -33,52 +33,6 @@ QPy_INLINE(size_t) __attribute__((pure)) find_group_from_hash(const hash_t hash,
     return group / QPy_GROUP;
 }
 
-QPy_INLINE(int) key_generic_compare(const khpair_t it, const PyObject *key, const hash_t hash)
-{
-    int cmp;
-
-    if (it->hash != hash)
-	return 0;
-    if (it->key == key)
-	return 1;
-
-    Py_INCREF(it->key);
-    cmp = PyObject_RichCompareBool(it->key, key, Py_EQ);
-    Py_DECREF(it->key);
-
-    return cmp;
-}
-
-QPy_INLINE(int) dict_update_key_in_entry(QPyDictObject *self, PyObject *restrict key, PyObject *restrict value, ssize_t j)
-{
-    PyObject *tmp = self->entries.values[j];
-
-    self->entries.values[j] = value;
-    Py_XDECREF(tmp);
-
-    // key already exist in dict so no use here
-    Py_XDECREF(key);
-    return 0;
-}
-
-QPy_INLINE(ssize_t) dict_add_entry(QPyDictObject *self, PyObject *restrict key, PyObject *restrict value, hash_t hash, ssize_t tag, ssize_t j)
-{
-    entry_t entries = self->entries;
-
-    assert(j * QPy_GROUP <= self->capacity);
-    assert(NULL == entries.values[j]);
-    assert(NULL == entries.kh[j].key);
-
-    entries.cache[j]  = tag;
-    entries.values[j] = value;
-
-    entries.kh[j].key  = key;
-    entries.kh[j].hash = hash;
-
-    inc_entry_size(self);
-    return 0;
-}
-
 __attribute__((warn_unused_result, nonnull))
 static void *caligned_malloc(void *mempptr, uint16_t align_size, size_t size)
 {
@@ -96,7 +50,7 @@ static void *caligned_malloc(void *mempptr, uint16_t align_size, size_t size)
     if (NULL == ptr)
 	return ptr;
     // align memory to align size
-    void *kptr = QPy_ALIGN_UP((uintptr_t)ptr + max_offset_size, align_size);
+    void *kptr = QPy_ALIGNU((uintptr_t)ptr + max_offset_size, align_size);
     // save align size (used for further memory op)
     ((uint16_t *)kptr)[-1] = (uintptr_t)kptr - (uintptr_t)ptr;
     
@@ -170,6 +124,85 @@ static inline void *_malloc(void *pptr, size_t size)
 static inline void _free(void *ptr)
 {
     return free(ptr);
+}
+
+QPy_INLINE(size_t) next_power_of_two(size_t n)
+{
+    assert(n != 0);
+
+    return (
+#if (SIZE_MAX > 0xffffffffU)
+	    1ULL << (64 - __builtin_clz(n))
+#else
+	    1U   << (32 - __builtin_clz(n))
+#endif
+	    );
+}
+
+QPy_INLINE(size_t) prev_power_of_two(size_t n)
+{
+    assert(n != 0);
+
+    // TODO: if n equals 1, should we return a correct 1, or 2 to make n remain a power of 2?
+    return (
+#if (SIZE_MAX > 0xffffffffU)
+	    1ULL << (63 - __builtin_clz(n))
+#else
+	    1U   << (31 - __builtin_clz(n))
+#endif
+	    );
+}
+
+QPy_INLINE(size_t) get_size_no_resize_trigger(const size_t size, const double lf)
+{
+    // returned value maybe alot larger than size
+    return next_power_of_two(size + (1 - lf) * size);
+}
+
+QPy_INLINE(int) key_generic_compare(const khpair_t it, const PyObject *key, const hash_t hash)
+{
+    int cmp;
+
+    if (it->hash != hash)
+	return 0;
+    if (it->key == key)
+	return 1;
+
+    Py_INCREF(it->key);
+    cmp = PyObject_RichCompareBool(it->key, key, Py_EQ);
+    Py_DECREF(it->key);
+
+    return cmp;
+}
+
+QPy_INLINE(int) dict_update_key_in_entry(QPyDictObject *self, PyObject *restrict key, PyObject *restrict value, ssize_t j)
+{
+    PyObject *tmp = self->entries.values[j];
+
+    self->entries.values[j] = value;
+    Py_XDECREF(tmp);
+
+    // key already exist in dict so no use here
+    Py_XDECREF(key);
+    return 0;
+}
+
+QPy_INLINE(ssize_t) dict_add_entry(QPyDictObject *self, PyObject *restrict key, PyObject *restrict value, hash_t hash, ssize_t tag, ssize_t j)
+{
+    entry_t entries = self->entries;
+
+    assert(j * QPy_GROUP <= self->capacity);
+    assert(NULL == entries.values[j]);
+    assert(NULL == entries.kh[j].key);
+
+    entries.cache[j]  = tag;
+    entries.values[j] = value;
+
+    entries.kh[j].key  = key;
+    entries.kh[j].hash = hash;
+
+    inc_entry_size(self);
+    return 0;
 }
 
 static int dict_alloc_internal(QPyDictObject *self, ssize_t size)
