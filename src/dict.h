@@ -2,9 +2,11 @@
 #define QPy_DICT_H
 #include <stdbool.h>
 #include <strings.h>
+#include <assert.h>
 #include "include/defs.h"
 #include "include/types.h"
 #include "include/mm.h"
+
 #ifndef QPy_MM_UNSUPPORTED
 
 #ifndef UINTPTR_MAX
@@ -23,18 +25,22 @@ QPy_INLINE(int) __attribute__((pure)) ctag(const uint64_t v)
     return ((v & 0xff) - ((v & 0xff) * 0x2041u >> 20) * 127) + 1;
 }
 #else
-#define ctag(v) ((v) & 0xff)
+#    define ctag(v) ((v) & 0xff)
 #endif
 
-QPy_INLINE(size_t) __attribute__((pure)) find_group_from_hash(const hash_t hash, const size_t size)
+QPy_INLINE(size_t) __attribute__((pure))
+find_group_from_hash(const hash_t hash,
+		     const size_t size)
 {
     const size_t group = QPy_ALIGN(hash & (size - 1));
 
     return group / QPy_GROUP;
 }
 
-__attribute__((warn_unused_result, nonnull))
-static void *caligned_malloc(void *mempptr, uint16_t align_size, size_t size)
+QPy_WARN_UNUSED(void *)
+caligned_malloc(void          *mempptr,
+		const uint16_t align_size,
+		const size_t   size)
 {
     const uint16_t align_offset_size = sizeof(uint16_t);
     const uint16_t align_fault       = align_size - 1;
@@ -46,14 +52,14 @@ static void *caligned_malloc(void *mempptr, uint16_t align_size, size_t size)
 	    return NULL;
 	}
 
-    void *ptr = malloc(size + max_offset_size); 
+    void *ptr = malloc(size + max_offset_size);
     if (NULL == ptr)
 	return ptr;
     // align memory to align size
     void *kptr = QPy_ALIGNU((uintptr_t)ptr + max_offset_size, align_size);
     // save align size (used for further memory op)
     ((uint16_t *)kptr)[-1] = (uintptr_t)kptr - (uintptr_t)ptr;
-    
+
     DDPTR(mempptr) = kptr;
     return kptr;
 }
@@ -64,13 +70,15 @@ static void caligned_free(void *memptr)
 	return;
 
     const uint16_t align_size = ((uint16_t *)memptr)[-1];
-    const void     *memstart  = (uintptr_t)memptr - align_size; // move behind offset (initial block start)
+    const void     *memstart  = (uintptr_t)memptr - align_size;
 
     return free(memstart);
 }
 
-__attribute__((warn_unused_result))
-static inline void *aligned_malloc_set(const size_t size, const uint16_t align_size, const int fchar)
+QPy_WARN_UNUSED(void *)
+aligned_malloc_set(const size_t   size,
+		   const uint16_t align_size,
+		   const int      fchar)
 {
     void *ptr = NULL;
 
@@ -79,8 +87,9 @@ static inline void *aligned_malloc_set(const size_t size, const uint16_t align_s
     return p;
 }
 
-__attribute__((warn_unused_result))
-static inline void *aligned_calloc(const size_t size, const uint16_t align_size)
+QPy_WARN_UNUSED(void *)
+aligned_calloc(const size_t   size,
+	       const uint16_t align_size)
 {
     void *ptr = NULL;
 
@@ -89,34 +98,35 @@ static inline void *aligned_calloc(const size_t size, const uint16_t align_size)
     return ptr;
 }
 
-__attribute__((warn_unused_result, nonnull))
-static inline void *_cache_alloc(void *pptr, size_t size)
+QPy_WARN_UNUSED(void *)
+_cache_alloc(void *pptr, size_t size)
 {
     void *ptr = NULL;
 
     assert(size != 0);
+
 #ifdef QPy_IMPRAND
-    // allocate memory with aligned to number of slots per group (always a power of two) and set with empty char
     ptr = aligned_malloc_set(size, QPy_GROUP, QPy_EMPTY);
 #else
-    // the same as above but zero out memory instead
     ptr = aligned_calloc(size, QPy_GROUP);
 #endif
+
     DDPTR(pptr) = ptr;
     return ptr;
 }
 
-__attribute__((warn_unused_result, nonnull))
-static inline void *_malloc(void *pptr, size_t size)
+QPy_WARN_UNUSED(void *) _malloc(void *pptr, size_t size)
 {
     void *ptr = NULL;
 
     assert(size != 0);
+
 #ifndef NDEBUG
     ptr = calloc(1, size);
 #else
     ptr = malloc(size);
 #endif
+
     DDPTR(pptr) = ptr;
     return ptr;
 }
@@ -143,7 +153,6 @@ QPy_INLINE(size_t) prev_power_of_two(size_t n)
 {
     assert(n != 0);
 
-    // TODO: if n equals 1, should we return a correct 1, or 2 to make n remain a power of 2?
     return (
 #if (SIZE_MAX > 0xffffffffU)
 	    1ULL << (63 - __builtin_clz(n))
@@ -153,17 +162,20 @@ QPy_INLINE(size_t) prev_power_of_two(size_t n)
 	    );
 }
 
-QPy_INLINE(size_t) get_size_no_resize_trigger(const size_t size, const double lf)
+QPy_INLINE(size_t)
+get_size_no_resize_trigger(const size_t size,
+			   const double lf)
 {
-    // returned value maybe alot larger than size
     return next_power_of_two(size + (1 - lf) * size);
 }
 
-QPy_INLINE(size_t) try_size_requirement(const size_t size, const size_t max_object_size)
+QPy_INLINE(size_t)
+try_size_requirement(const size_t size,
+		     const size_t max_object_size)
 {
     assert(size < 1);
 
-    size_t try_size = get_size_no_resize_trigger(size, 1.0); // TODO: define load factor
+    size_t try_size = get_size_no_resize_trigger(size, 1.0);
 
     if (__builtin_mul_overflow(try_size, max_object_size, &try_size))
 	{
@@ -175,11 +187,14 @@ QPy_INLINE(size_t) try_size_requirement(const size_t size, const size_t max_obje
 	    return size;
 #	 endif
 	}
-    // may be safe
+
     return try_size;
 }
 
-QPy_INLINE(int) key_generic_compare(const khpair_t it, const PyObject *key, const hash_t hash)
+QPy_INLINE(int)
+key_generic_compare(const khpair_t  it,
+		    const PyObject *key,
+		    const hash_t    hash)
 {
     int cmp;
 
@@ -195,19 +210,28 @@ QPy_INLINE(int) key_generic_compare(const khpair_t it, const PyObject *key, cons
     return cmp;
 }
 
-QPy_INLINE(int) dict_update_key_in_entry(QPyDictObject *self, PyObject *restrict key, PyObject *restrict value, ssize_t j)
+QPy_INLINE(int)
+dict_update_key_in_entry(QPyDictObject     *self,
+			 PyObject *restrict key,
+			 PyObject *restrict value,
+			 ssize_t j)
 {
     PyObject *tmp = self->entries.values[j];
 
     self->entries.values[j] = value;
     Py_XDECREF(tmp);
+    Py_XDECREF(key); // key already exist
 
-    // key already exist in dict so no use here
-    Py_XDECREF(key);
     return 0;
 }
 
-QPy_INLINE(ssize_t) dict_add_entry(QPyDictObject *self, PyObject *restrict key, PyObject *restrict value, hash_t hash, ssize_t tag, ssize_t j)
+QPy_INLINE(ssize_t)
+dict_add_entry(QPyDictObject     *self,
+	       PyObject *restrict key,
+	       PyObject *restrict value,
+	       hash_t  hash,
+	       ssize_t tag,
+	       ssize_t j)
 {
     entry_t entries = self->entries;
 
@@ -225,14 +249,15 @@ QPy_INLINE(ssize_t) dict_add_entry(QPyDictObject *self, PyObject *restrict key, 
     return 0;
 }
 
-static int dict_alloc_internal(QPyDictObject *self, ssize_t size)
+static int dict_alloc_internal(QPyDictObject *self,
+			       ssize_t        size)
 {
     if (size < 0)
 	return -1;
     if (0 == size)
 	return 0;
 
-    size_t n = try_size_requirement(nn, sizeof(khpair_t));
+    size_t n = try_size_requirement(size, sizeof(khpair_t));
     if (0 == n)
 	return -1;
 
@@ -253,11 +278,15 @@ static int dict_alloc_internal(QPyDictObject *self, ssize_t size)
 
     self.capacity = n;
     self.group_capacity = n / QPy_GROUP;
+
     return 0;
 }
 
 
-QPy_PTR_INLINE(ssize_t) lookup_insert_generic_nodeleted(QPyDictObject *self, PyObject *restrict key, PyObject *restrict value)
+QPy_PTR_INLINE(ssize_t)
+lookup_insert_generic_nodeleted(QPyDictObject     *self,
+				PyObject *restrict key,
+				PyObject *restrict value)
 {
     const hash_t hash  = PyObject_Hash(key);
 
@@ -267,7 +296,7 @@ QPy_PTR_INLINE(ssize_t) lookup_insert_generic_nodeleted(QPyDictObject *self, PyO
     const size_t group_idx = find_group_from_hash(hash, self->capacity);
     const uint8_t  tag     = ctag(hash);
     const mm_t dup         = mm_duplicate(tag);
-    
+
     size_t probe=0, cnt=0;
 
     do {
@@ -280,15 +309,23 @@ QPy_PTR_INLINE(ssize_t) lookup_insert_generic_nodeleted(QPyDictObject *self, PyO
 	    {
 		int j   = mm_scan_mask(mask);
 		int cmp = key_generic_compare(it+j, key, hash);
-		
+
 		if (QPy_UNLIKELY(cmp < 0))
 		    return -1;
 		if (cmp)
-		    return dict_update_key_in_entry(self, key, value, j);
+		    return dict_update_key_in_entry(self,
+						    key,
+						    value,
+						    j);
 	    }
 	mask = mm_test_empty(group); // TODO
 	if (QPy_LIKELY(mask))
-	    return dict_add_entry(self, key, value, hash, tag, mm_scan_mask(mask));
+	    return dict_add_entry(self,
+				  key,
+				  value,
+				  hash,
+				  tag,
+				  mm_scan_mask(mask));
 
 	probe_next_dict_slot(probe, cnt);
     } while (true);
@@ -296,7 +333,10 @@ QPy_PTR_INLINE(ssize_t) lookup_insert_generic_nodeleted(QPyDictObject *self, PyO
     QPy_UNREACHABLE();
 }
 
-QPy_PTR_INLINE(ssize_t) lookup_insert_generic(QPyDictObject *self, PyObject *restrict key, PyObject *restrict value)
+QPy_PTR_INLINE(ssize_t)
+lookup_insert_generic(QPyDictObject     *self,
+		      PyObject *restrict key,
+		      PyObject *restrict value)
 {
     const hash_t hash      = PyObject_Hash(key);
 
@@ -306,7 +346,7 @@ QPy_PTR_INLINE(ssize_t) lookup_insert_generic(QPyDictObject *self, PyObject *res
     const size_t group_idx = find_group_from_hash(hash, self->capacity);
     const uint8_t  tag     = ctag(hash);
     const mm_t     dup     = mm_duplicate(tag);
-    
+
     size_t probe=0, cnt=0; ssize_t k=-1;
 
     do {
@@ -319,11 +359,14 @@ QPy_PTR_INLINE(ssize_t) lookup_insert_generic(QPyDictObject *self, PyObject *res
 	    {
 		int j   = mm_scan_mask(mask);
 		int cmp = key_generic_compare(it+j, key, hash);
-		
+
 		if (QPy_UNLIKELY(cmp < 0))
 		    return -1;
 		if (cmp)
-		    return dict_update_key_in_entry(self, key, value, j);
+		    return dict_update_key_in_entry(self,
+						    key,
+						    value,
+						    j);
 	    }
 	if (k < 0)
 	    k = mm_find_empty_slot(group); // TODO
@@ -334,11 +377,18 @@ QPy_PTR_INLINE(ssize_t) lookup_insert_generic(QPyDictObject *self, PyObject *res
     } while (true);
 
     if (k != -1)
-	return dict_add_entry(self, key, value, hash, tag, k);
+	return dict_add_entry(self,
+			      key,
+			      value,
+			      hash,
+			      tag,
+			      k);
     QPy_UNREACHABLE();
 }
 
-QPy_PTR_INLINE(ssize_t) lookup_generic(QPyDictObject *self, PyObject *key)
+QPy_PTR_INLINE(ssize_t)
+lookup_generic(QPyDictObject *self,
+	       PyObject      *key)
 {
     const hash_t hash      = PyObject_Hash(key);
 
@@ -348,7 +398,7 @@ QPy_PTR_INLINE(ssize_t) lookup_generic(QPyDictObject *self, PyObject *key)
     const size_t group_idx = find_group_from_hash(hash, self->capacity);
     const uint8_t  tag     = ctag(hash);
     const mm_t     dup     = mm_duplicate(tag);
-    
+
     size_t probe=0, cnt=0;
 
     do {
@@ -361,7 +411,7 @@ QPy_PTR_INLINE(ssize_t) lookup_generic(QPyDictObject *self, PyObject *key)
 	    {
 		int j   = mm_scan_mask(mask);
 		int cmp = key_generic_compare(it+j, key, hash);
-		
+
 		if (QPy_UNLIKELY(cmp < 0))
 		    return -1;
 		if (cmp)
@@ -374,7 +424,6 @@ QPy_PTR_INLINE(ssize_t) lookup_generic(QPyDictObject *self, PyObject *key)
 
     QPy_UNREACHABLE();
 }
-
 
 #else // QPy_MM_UNSUPPORTED
 #    error
