@@ -65,6 +65,14 @@ extern inline __forceinline uint64_t QPy_BSR(const uint64_t v)
 #    define QPy_UNLIKELY()
 #endif
 
+#ifdef Py_VERSION_HEX
+#    define QPy_UNREACHABLE() Py_UNREACHABLE()
+#elif defined(QPy_GCL_CC) || defined(QPy_INTEL_CC)
+#    define QPy_UNREACHABLE() __builtin_unreachable()
+#else
+#    define QPy_UNREACHABLE()
+#endif
+
 #define QPy_SETVAL(lv, rv)      ((lv) = (rv))
 #define QPy_SETEXC(type, msg)   (PyErr_SetString(type, msg), QPy_Err)
 #define QPy_RAISE_BADARG(msg)   QPy_SETEXC(PyExc_TypeError, msg)

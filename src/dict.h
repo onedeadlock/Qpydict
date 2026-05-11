@@ -1,12 +1,16 @@
 #ifndef QPy_DICT_H
 #define QPy_DICT_H
 #include <stdbool.h>
+#include <strings.h>
 #include "include/defs.h"
 #include "include/types.h"
 #include "include/mm.h"
 #ifndef QPy_MM_UNSUPPORTED
 
-#define QPy_UNREACHABLE() (void)0 // TODO
+#ifndef UINTPTR_MAX
+typedef uintptr_t unsigned long int
+#endif
+#define DDPTR(dptr) (*(void **)(dptr))
 
 #define dict_slot(d, p, i) (((p) + (i)) & ((d)->group_capacity - 1))
 #define probe_next_dict_slot(p, c) ((p) += ((c)++) + 1)
@@ -75,49 +79,97 @@ QPy_INLINE(ssize_t) dict_add_entry(QPyDictObject *self, PyObject *restrict key, 
     return 0;
 }
 
-
-static inline void *aligned_malloc_set(size_t size, void *ptr, int char)
+__attribute__((warn_unused_result, nonnull))
+static void *caligned_malloc(void *mempptr, uint16_t align_size, size_t size)
 {
-    void *p = NULL;
-    // TODO
+    const uint16_t align_offset_size = sizeof(uint16_t);
+    const uint16_t align_fault       = align_size - 1;
+    const uint16_t max_offset_size   = align_offset_size + align_fault;
+
+    if (size > (SIZE_MAX - max_offset_size))
+	{
+	    // alignment would cause overflow
+	    return NULL;
+	}
+
+    void *ptr = malloc(size + max_offset_size); 
+    if (NULL == ptr)
+	return ptr;
+    // align memory to align size
+    void *kptr = QPy_ALIGN_UP((uintptr_t)ptr + max_offset_size, align_size);
+    // save align size (used for further memory op)
+    ((uint16_t *)kptr)[-1] = (uintptr_t)kptr - (uintptr_t)ptr;
+    
+    DDPTR(mempptr) = kptr;
+    return kptr;
+}
+
+static void caligned_free(void *memptr)
+{
+    if (memptr == NULL)
+	return;
+
+    const uint16_t align_size = ((uint16_t *)memptr)[-1];
+    const void     *memstart  = (uintptr_t)memptr - align_size; // move behind offset (initial block start)
+
+    return free(memstart);
+}
+
+__attribute__((warn_unused_result))
+static inline void *aligned_malloc_set(const size_t size, const uint16_t align_size, const int fchar)
+{
+    void *ptr = NULL;
+
+    if (caligned_malloc(&ptr, align_size, size))
+	return memset(ptr, fchar, size);
     return p;
 }
 
-static inline void *aligned_calloc(size_t size, void *ptr)
+__attribute__((warn_unused_result))
+static inline void *aligned_calloc(const size_t size, const uint16_t align_size)
 {
-    void *p = NULL;
-    // TODO
-    return p;
+    void *ptr = NULL;
+
+    if (caligned_malloc(&ptr, align_size, size))
+	return memset(ptr, 0, size);
+    return ptr;
 }
 
-static inline void *_cache_alloc(size_t size, void *ptr)
+__attribute__((warn_unused_result, nonnull))
+static inline void *_cache_alloc(void *pptr, size_t size)
 {
-    void *p = NULL;
+    void *ptr = NULL;
 
     assert(size != 0);
-#ifdef QPy_IMP
-    // allocate memory with aligned to number of slots per group (always a power of two) and fill with empty char
-    p = aligned_malloc_set(size, QPy_GROUP, QPy_EMPTY);
+#ifdef QPy_IMPRAND
+    // allocate memory with aligned to number of slots per group (always a power of two) and set with empty char
+    ptr = aligned_malloc_set(size, QPy_GROUP, QPy_EMPTY);
 #else
     // the same as above but zero out memory instead
-    p = aligned_calloc(size, QPy_GROUP);
+    ptr = aligned_calloc(size, QPy_GROUP);
 #endif
-    *(void **)ptr = p;
-    return p;
+    DDPTR(pptr) = ptr;
+    return ptr;
 }
 
-static inline void *_malloc(size_t size, void *ptr)
+__attribute__((warn_unused_result, nonnull))
+static inline void *_malloc(void *pptr, size_t size)
 {
-    void *p = NULL;
+    void *ptr = NULL;
 
     assert(size != 0);
 #ifndef NDEBUG
-    p = calloc(1, size);
+    ptr = calloc(1, size);
 #else
-    p = malloc(size);
+    ptr = malloc(size);
 #endif
-    *(void **)ptr = p;
-    return p;
+    DDPTR(pptr) = ptr;
+    return ptr;
+}
+
+static inline void _free(void *ptr)
+{
+    return free(ptr);
 }
 
 static int dict_alloc_internal(QPyDictObject *self, ssize_t size)
@@ -127,11 +179,11 @@ static int dict_alloc_internal(QPyDictObject *self, ssize_t size)
     if (0 == size)
 	return 0;
  
-    void *kh, *v, *c = malloc(size);
+    void *kh, *v, *c;
 
-    if (NULL == _cache_alloc(size, &c) ||
-	NULL == _malloc(size * sizeof(PyObject *), &v) ||
-	NULL == _malloc(size * sizeof(khpair_t), &kh))
+    if (NULL == _cache_alloc(&c, size) ||
+	NULL == _malloc(&v,  size * sizeof(PyObject *)) ||
+	NULL == _malloc(&kh, size * sizeof(khpair_t)))
 	{
 	    _cache_free(c);
 	    _free(v);
