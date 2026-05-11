@@ -13,10 +13,14 @@
 
 #define inc_entry_size(d) ++((d)->size)
 
+#ifndef QPy_IMPRAND
 QPy_INLINE(int) __attribute__((pure)) ctag(const uint64_t v)
 {
     return ((v & 0xff) - ((v & 0xff) * 0x2041u >> 20) * 127) + 1;
 }
+#else
+#define ctag(v) ((v) & 0xff)
+#endif
 
 QPy_INLINE(size_t) __attribute__((pure)) find_group_from_hash(const hash_t hash, const size_t size)
 {
@@ -25,7 +29,7 @@ QPy_INLINE(size_t) __attribute__((pure)) find_group_from_hash(const hash_t hash,
     return group / QPy_GROUP;
 }
 
-QPy_INLINE(int) key_generic_compare(const khpair_t it, const PyObject *key, const QPy_hash_t hash)
+QPy_INLINE(int) key_generic_compare(const khpair_t it, const PyObject *key, const hash_t hash)
 {
     int cmp;
 
@@ -53,7 +57,7 @@ QPy_INLINE(int) dict_update_key_in_entry(QPyDictObject *self, PyObject *restrict
     return 0;
 }
 
-dict_add_entry(QPyDictObject *self, PyObject *restrict key, PyObject *restrict value, hash_t hash, ssize_t tag, ssize_t j)
+QPy_INLINE(ssize_t) dict_add_entry(QPyDictObject *self, PyObject *restrict key, PyObject *restrict value, hash_t hash, ssize_t tag, ssize_t j)
 {
     entry_t entries = self->entries;
 
@@ -70,6 +74,79 @@ dict_add_entry(QPyDictObject *self, PyObject *restrict key, PyObject *restrict v
     inc_entry_size(self);
     return 0;
 }
+
+
+static inline void *aligned_malloc_set(size_t size, void *ptr, int char)
+{
+    void *p = NULL;
+    // TODO
+    return p;
+}
+
+static inline void *aligned_calloc(size_t size, void *ptr)
+{
+    void *p = NULL;
+    // TODO
+    return p;
+}
+
+static inline void *_cache_alloc(size_t size, void *ptr)
+{
+    void *p = NULL;
+
+    assert(size != 0);
+#ifdef QPy_IMP
+    // allocate memory with aligned to number of slots per group (always a power of two) and fill with empty char
+    p = aligned_malloc_set(size, QPy_GROUP, QPy_EMPTY);
+#else
+    // the same as above but zero out memory instead
+    p = aligned_calloc(size, QPy_GROUP);
+#endif
+    *(void **)ptr = p;
+    return p;
+}
+
+static inline void *_malloc(size_t size, void *ptr)
+{
+    void *p = NULL;
+
+    assert(size != 0);
+#ifndef NDEBUG
+    p = calloc(1, size);
+#else
+    p = malloc(size);
+#endif
+    *(void **)ptr = p;
+    return p;
+}
+
+static int dict_alloc_internal(QPyDictObject *self, ssize_t size)
+{
+    if (size < 0)
+	return -1;
+    if (0 == size)
+	return 0;
+ 
+    void *kh, *v, *c = malloc(size);
+
+    if (NULL == _cache_alloc(size, &c) ||
+	NULL == _malloc(size * sizeof(PyObject *), &v) ||
+	NULL == _malloc(size * sizeof(khpair_t), &kh))
+	{
+	    _cache_free(c);
+	    _free(v);
+	    return -1;
+	}
+
+    self->entries.cache  = c;
+    self->entries.values = v;
+    self->entries.kh     = kh;
+
+    self.capacity = size;
+    self.group_capacity = size / QPy_GROUP;
+    return 0;
+}
+
 
 QPy_PTR_INLINE(ssize_t) lookup_insert_generic_nodeleted(QPyDictObject *self, PyObject *restrict key, PyObject *restrict value)
 {
