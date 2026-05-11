@@ -159,6 +159,26 @@ QPy_INLINE(size_t) get_size_no_resize_trigger(const size_t size, const double lf
     return next_power_of_two(size + (1 - lf) * size);
 }
 
+QPy_INLINE(size_t) try_size_requirement(const size_t size, const size_t max_object_size)
+{
+    assert(size < 1);
+
+    size_t try_size = get_size_no_resize_trigger(size, 1.0); // TODO: define load factor
+
+    if (__builtin_mul_overflow(try_size, max_object_size, &try_size))
+	{
+	    // try_size would overflow
+#        if QPy_ENFORCE_EXACT_SIZE
+	    return 0;
+#	 else
+	    // return initial size; object will trigger an early resize
+	    return size;
+#	 endif
+	}
+    // may be safe
+    return try_size;
+}
+
 QPy_INLINE(int) key_generic_compare(const khpair_t it, const PyObject *key, const hash_t hash)
 {
     int cmp;
@@ -211,12 +231,16 @@ static int dict_alloc_internal(QPyDictObject *self, ssize_t size)
 	return -1;
     if (0 == size)
 	return 0;
- 
+
+    size_t n = try_size_requirement(nn, sizeof(khpair_t));
+    if (0 == n)
+	return -1;
+
     void *kh, *v, *c;
 
-    if (NULL == _cache_alloc(&c, size) ||
-	NULL == _malloc(&v,  size * sizeof(PyObject *)) ||
-	NULL == _malloc(&kh, size * sizeof(khpair_t)))
+    if (NULL == _cache_alloc(&c, n) ||
+	NULL == _malloc(&v,  n * sizeof(PyObject *)) ||
+	NULL == _malloc(&kh, n * sizeof(khpair_t)))
 	{
 	    _cache_free(c);
 	    _free(v);
@@ -227,8 +251,8 @@ static int dict_alloc_internal(QPyDictObject *self, ssize_t size)
     self->entries.values = v;
     self->entries.kh     = kh;
 
-    self.capacity = size;
-    self.group_capacity = size / QPy_GROUP;
+    self.capacity = n;
+    self.group_capacity = n / QPy_GROUP;
     return 0;
 }
 
