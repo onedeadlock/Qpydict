@@ -31,7 +31,7 @@ local_inline int PURE(ctag)(const uint64_t v)
 local_inline
 size_t PURE(find_group_from_hash)(const hash_t hash, onst size_t size)
 {
-    const size_t group = QPy_ALIGN(hash & (size - 1));
+    const size_t group = ALIGN(hash & (size - 1));
 
     return group / NGROUP;
 }

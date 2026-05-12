@@ -21,10 +21,10 @@
 #endif
 
 #ifndef __has_builtin
-    #define __has_builtin(x) 0
+#    define __has_builtin(x) 0
 #endif
 #ifndef __has_attribute
-  #define __has_attribute(x) 0 
+#    define __has_attribute(x) 0 
 #endif
 #define has_builtin(x)   (__has_builtin(x) OR HAVE_GCC_COMPILER)
 #define has_attribute(x) (__has_attribute(x) OR HAVE_GCC_COMPILER)
