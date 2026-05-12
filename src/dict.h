@@ -150,9 +150,9 @@ local_inline size_t next_power_of_two(size_t n)
 
     return (
 #if (SIZE_MAX > 0xffffffffU)
-	    1ULL << (64 - __builtin_clz(n))
+	    1ULL << (64 - BSF(n))
 #else
-	    1U   << (32 - __builtin_clz(n))
+	    1U   << (32 - BSF(n))
 #endif
 	    );
 }
@@ -163,9 +163,9 @@ local_inline size_t prev_power_of_two(size_t n)
 
     return (
 #if (SIZE_MAX > 0xffffffffU)
-	    1ULL << (63 - __builtin_clz(n))
+	    1ULL << (63 - BSF(n))
 #else
-	    1U   << (31 - __builtin_clz(n))
+	    1U   << (31 - BSF(n))
 #endif
 	    );
 }

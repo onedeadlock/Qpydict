@@ -37,18 +37,32 @@
 #    define LIKELY(x)   (x)
 #endif
 
-#if has_builtin(__builtin_ctzll)
+#if has_builtin(__builtin_ctz)
 #    define BSR(x) __builtin_ctzll(x)
 #elif HAVE_INTEL_COMPILER && defined(_bit_scan_reverse)
 #    define BSR(x) _bit_scan_reverse(x)
 #elif HAVE_MSVC_COMPILER
 static inline __forceinline uint64_t BSR(const uint64_t v)
 {
-    unsigned long idx;
+    uint64_t idx;
     return (_BitScanReverse64(&idx, v), idx);
 }
 #else
 #    define BSR(x) // TODO
+#endif
+
+#if has_builtin(__builtin_clz)
+#    define BSF(x) __builtin_clzll(x)
+#elif HAVE_INTEL_COMPILER && defined(_bit_scan_forward)
+#    define BSF(x) _bit_scan_forward(x)
+#elif HAVE_MSVC_COMPILER
+static inline __forceinline uint64_t BSF(const uint64_t v)
+{
+    uint64_t idx;
+    return (_BitScanForward64(&idx, v), idx);
+}
+#else
+#    define BSF(x) // TODO
 #endif
 
 #if has_builtin(__builtin_unreachable)
