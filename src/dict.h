@@ -353,7 +353,7 @@ local ssize_t lookup_insert_generic_nodeleted
 	probe_next_dict_slot(probe, cnt);
     } while (true);
 
-    QPy_UNREACHABLE();
+    UNREACHABLE();
 }
 
 locale_inline ssize_t lookup_insert_generic
@@ -411,7 +411,7 @@ locale_inline ssize_t lookup_insert_generic
 			      hash,
 			      tag,
 			      k);
-    QPy_UNREACHABLE();
+    UNREACHABLE();
 }
 
 locale_inline ssize_t lookup_generic
@@ -455,7 +455,7 @@ locale_inline ssize_t lookup_generic
 	probe_next_dict_slot(probe, cnt);
     } while (true);
 
-    QPy_UNREACHABLE();
+    UNREACHABLE();
 }
 
 #else // QPy_MM_UNSUPPORTED
