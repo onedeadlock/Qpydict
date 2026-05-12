@@ -4,6 +4,19 @@
     #include <windows.h>
 #endif
 
+#ifndef __has_builtin
+    #define __has_builtin(x) 0
+#endif
+
+#if __has_builtin(__builtin_expect)
+#endif
+
+#if __has_builtin(__builtin_ctzll)
+#endif
+
+#if __has_builtin(__builtin_unreachable)
+#endif
+
 #if defined(__clang__) || defined(__GNUC__) || defined(__MINGW32__) || defined(__MINGW64__)
 #    define QPy_GCL_CC 1
 #elif defined(_MSC_VER)

@@ -33,9 +33,10 @@ typedef struct {
 } khpair_t;
 
 typedef struct {
-    struct {
-	uint8_t  *cache;
-	PyObject *values;
+    struct 
+    {
+	    uint8_t  *cache;
+	    PyObject *values;
     };
     khpair_t *kh; // key & value pair
     uint8_t  *kind; // kind of keys in dict
