@@ -4,8 +4,22 @@
     #include <windows.h>
 #endif
 
+#if __has_attribute(__always_inline__)
+#endif
+
+#if defined(__clang__) || defined(__GNUC__) || defined(__MINGW32__) || defined(__MINGW64__)
+#    define GCC   1
+#elif defined(_MSC_VER)
+#    define MSVC  1
+#elif defined(INTEL_LLVM_COMPILER)
+#    define INTEL 1
+#endif
+
 #ifndef __has_builtin
     #define __has_builtin(x) 0
+#endif
+#ifndef __has_attribute
+  #define __has_attribute(x) 0 
 #endif
 
 #if __has_builtin(__builtin_expect)
@@ -23,20 +37,6 @@
 #if __has_builtin(__builtin_mul_overflow_p)
 #endif
 
-#ifndef __has_attribute
-  #define __has_attribute(x) 0 
-#endif
-
-#if __has_attribute(__always_inline__)
-#endif
-
-#if defined(__clang__) || defined(__GNUC__) || defined(__MINGW32__) || defined(__MINGW64__)
-#    define QPy_GCL_CC 1
-#elif defined(_MSC_VER)
-#    define QPy_MSVC_CC 1
-#elif defined(INTEL_LLVM_COMPILER)
-#    define QPy_INTEL_CC
-#endif
 
 #if QPy_ARCH_ARM && !defined(QPy_ALIGNED_LOAD)
     #define QPy_ALIGNED_LOAD 1
