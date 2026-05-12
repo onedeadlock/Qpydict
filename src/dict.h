@@ -20,7 +20,7 @@ typedef uintptr_t unsigned long int
 #define inc_entry_size(d) ++((d)->size)
 
 #ifdef FORCE_TAG_RANDOM
-local_inline int __attribute__((pure)) ctag(const uint64_t v)
+local_inline int PURE(ctag)(const uint64_t v)
 {
     return ((v & 0xff) - ((v & 0xff) * 0x2041u >> 20) * 127) + 1;
 }
@@ -28,18 +28,20 @@ local_inline int __attribute__((pure)) ctag(const uint64_t v)
 #    define ctag(v) ((v) & 0xff)
 #endif
 
-local_inline size_t __attribute__((pure))
-find_group_from_hash(const hash_t hash,
-		     const size_t size)
+local_inline
+size_t PURE(find_group_from_hash)(const hash_t hash, onst size_t size)
 {
     const size_t group = QPy_ALIGN(hash & (size - 1));
 
     return group / NGROUP;
 }
 
-local void *caligned_malloc(void          *mempptr,
-		const uint16_t align_size,
-		const size_t   size)
+warn_unused local void *caligned_malloc
+(
+ void          *mempptr,
+ const uint16_t align_size,
+ const size_t   size
+ )
 {
     const uint16_t align_offset_size = sizeof(uint16_t);
     const uint16_t align_fault       = align_size - 1;
@@ -76,7 +78,7 @@ local void caligned_free(void *memptr)
     return free(memstart);
 }
 
-local_inline void * aligned_malloc_set
+warn_unused local_inline void * aligned_malloc_set
 (
 	const size_t   size,
 	const uint16_t align_size,
@@ -103,7 +105,8 @@ local_inline void *aligned_calloc
     return ptr;
 }
 
-local_inline void *_cache_alloc(void *pptr, size_t size)
+warn_unused local_inline
+void *_cache_alloc(void *pptr, size_t size)
 {
     void *ptr = NULL;
 
@@ -119,7 +122,8 @@ local_inline void *_cache_alloc(void *pptr, size_t size)
     return ptr;
 }
 
-local void * _malloc(void *pptr, size_t size)
+warn_unused local_inline
+void * _malloc(void *pptr, size_t size)
 {
     void *ptr = NULL;
 
@@ -135,7 +139,7 @@ local void * _malloc(void *pptr, size_t size)
     return ptr;
 }
 
-local void _free(void *ptr)
+local_inline void _free(void *ptr)
 {
     return free(ptr);
 }
@@ -181,11 +185,11 @@ local_inline size_t try_size_requirement
 	const size_t max_object_size
 )
 {
-    assert(size < 1);
+    assert(size != 0);
 
     size_t try_size = get_size_no_resize_trigger(size, 1.0);
 
-    if (__builtin_mul_overflow(try_size, max_object_size, &try_size))
+    if (check_if_safe_mul(try_size, max_object_size, (size_t)0))
 	{
 	    // try_size would overflow
 #        if QPy_ENFORCE_EXACT_SIZE

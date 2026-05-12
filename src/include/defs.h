@@ -1,16 +1,21 @@
 #ifndef QPy_DEFS_H
 #define QPy_DEFS_H
-#if defined(_WIN32) || defined(_WIN64) || defined(_MSC_VER)
-    #include <windows.h>
+
+#ifndef OR
+#    define OR   ||
+#endif
+#ifndef AND
+#    define AND  &&
 #endif
 
-#define OR ||
-#define __OR OR
+#if defined(_WIN32) OR defined(_WIN64) OR defined(_MSC_VER)
+#    include <windows.h>
+#endif
 
 #if defined(__clang__) OR defined(__GNUC__) OR defined(__MINGW32__) OR defined(__MINGW64__)
 #    define HAVE_GCC_COMPILER   1
 #elif defined(_MSC_VER)
-#    define HAVE_MVSC_COMPILER  1
+#    define HAVE_MSVC_COMPILER  1
 #elif defined(INTEL_LLVM_COMPILER)
 #    define HAVE_INTEL_COMPILER 1
 #endif
@@ -21,8 +26,58 @@
 #ifndef __has_attribute
   #define __has_attribute(x) 0 
 #endif
+#define has_builtin(x)   (__has_builtin(x) OR HAVE_GCC_COMPILER)
+#define has_attribute(x) (__has_attribute(x) OR HAVE_GCC_COMPILER)
 
-#if __has_attribute(__always_inline__) __OR HAVE_GCC_COMPILER
+#if has_builtin(__builtin_expect)
+#    define UNLIKELY(x) __builtin_expect(!!(x), 0)
+#    define LIKELY(x)   __builtin_expect(!!(x), 1)
+#else
+#    define UNLIKELY(x) (x)
+#    define LIKELY(x)   (x)
+#endif
+
+#if has_builtin(__builtin_ctzll)
+#    define BSR(x) __builtin_ctzll(x)
+#elif HAVE_INTEL_COMPILER && defined(_bit_scan_reverse)
+#    define BSR(x) _bit_scan_reverse(x)
+#elif HAVE_MSVC_COMPILER
+static inline __forceinline uint64_t BSR(const uint64_t v)
+{
+    unsigned long idx;
+    return (_BitScanReverse64(&idx, v), idx);
+}
+#else
+#    define BSR(x) // TODO
+#endif
+
+#if has_builtin(__builtin_unreachable)
+#    define UNREACHABLE() __builtin_unreachable()
+#else
+#    define UNREACHABLE()
+#endif
+
+// enable aligned load on arm (default)
+#if SYSARCH_IS_ARM && !defined(ALIGNED_LOAD)
+#    define ALIGNED_LOAD 1
+#endif
+
+// Round up/down to a multiple of 2^d
+#define ALIGN(v, d)    ((v) - ((v) & (d)))
+#define ALIGNU(v, d)   (((n) + (d) - 1) & ~((d) - 1))
+
+// set value
+#define SETVAL(lv, rv) ((lv) = (rv))
+
+#if has_builtin(__builtin_add_overflow_p) && has_builtin(__builtin_mul_overflow_p)
+#   define check_if_safe_add(x, y, hint) !__builtin_add_overflow_p(x, y, hint)
+#   define check_if_safe_mul(x, y, hint) !__builtin_mul_overflow_p(x, y, hint) 
+#else // TODO
+#   define check_if_safe_add(x, y, type) 0
+#   define check_if_safe_mul(x, y, type) 0
+#endif
+
+#if has_attribute(__always_inline__)
 #    define force_inline __attribute__((always_inline))
 #elif HAVE_MVSC_COMPILER
 #    define force_inline __forceinline
@@ -30,100 +85,29 @@
 #    define force_inline 
 #endif
 
-#if __has_builtin(__builtin_expect) __OR HAVE_GCC_COMPILER
-#    define UNLIKELY() __builtin_expect()
-#endif
-
-#if __has_builtin(__builtin_ctzll)
-#endif
-
-#if __has_builtin(__builtin_unreachable)
-#endif
-
-#if __has_builtin(__builtin_add_overflow_p)
-#endif
-
-#if __has_builtin(__builtin_mul_overflow_p)
-#endif
-
-
-#if QPy_ARCH_ARM && !defined(QPy_ALIGNED_LOAD)
-    #define QPy_ALIGNED_LOAD 1
-#endif
-
-// BSR
-#if   QPy_INTEL_CC
-#    define QPy_BSR(mask) _bit_scan_reverse(mask)
-#elif QPy_GCL_CC
-#    define QPy_BSR(mask) __builtin_ctzll(mask)
-#elif QPy_MSVC_CC
-extern inline __forceinline uint64_t QPy_BSR(const uint64_t v)
-{
-    unsigned long idx;
-    return (_BitScanReverse64(&idx, v), idx);
-}
+#if has_attribute(__warn_unused_result__)
+#    define warn_unused __attribute__((warn_unused_result))
 #else
-// TODO: implement fallback for BSR
+#    define warn_unused 
 #endif
-#define QPy_SCAN_MASK(v) QPy_FIXIDX(QPy_BSR(v))
 
-// Round up/down to a multiple of 2^d
-#define ALIGN(v, d)  ((v) - ((v) & (d)))
-#define ALIGNU(v, d) (((n) + (d) - 1) & ~((d) - 1))
-
-#if QPy_ALIGNED_LOAD
-#    define QPy_LOADALIGN(v) ALIGN(v, QPy_PWGROUP)
+#if has_attribute(__unused__)
+#    define UNUSED(x) x __attribute__((unused))
 #else
-#    define QPy_LOADALIGN(v) (v)
+#    define UNUSED(x) x
 #endif
 
-// Group properties (all properties of group are in powers of 2)
-#define QPy_GROUP       QPy_NGROUP // sizeof group
-#define QPy_GROUP_PS    QPy_PWGROUP // log2 sizeof group
-#define QPy_DIVGROUP(v) ((v) >> QPy_GROUP_PS) // v / sizeof group
-
-// Compiler Intrinsics
-#if defined(QPy_GCL_CC) || defined(QPy_INTEL_CC)
-#    define QPy_PTR_INLINE(type) __attribute__((nonnull, always_inline)) static inline type
-#    define QPy_INLINE(type)     __attribute__((always_inline))          static inline type
-#    define QPy_LIKELY(expr)     __builtin_expect(!!(expr), 1)
-#    define QPy_UNLIKELY(expr)   __builtin_expect(!!(expr), 0)
+#if has_attribute(__pure__)
+#    define PURE(x) x __attribute__((pure))
 #else
-#    if defined(QPy_MSVC_CC)
-#        define QPy_PTR_INLINE(type) static inline __forceinline type
-#        define QPy_INLINE(type) QPy_PTR_INLINE(type)
-#    else
-#        define QPy_PTR_INLINE()
-#        define QPy_INLINE()
-#    endif
-#    define QPy_LIKELY()
-#    define QPy_UNLIKELY()
+#    define PURE(x) x
 #endif
 
-#ifdef Py_VERSION_HEX
-#    define QPy_UNREACHABLE() Py_UNREACHABLE()
-#elif defined(QPy_GCL_CC) || defined(QPy_INTEL_CC)
-#    define QPy_UNREACHABLE() __builtin_unreachable()
-#else
-#    define QPy_UNREACHABLE()
+#ifndef local
+#    define local static
+#endif
+#ifndef local_inline
+#    define local_inline static inline force_inline
 #endif
 
-#define QPy_SETVAL(lv, rv)      ((lv) = (rv))
-#define QPy_SETEXC(type, msg)   (PyErr_SetString(type, msg), QPy_Err)
-#define QPy_RAISE_BADARG(msg)   QPy_SETEXC(PyExc_TypeError, msg)
-#define QPy_RAISE_OVERFLOW(msg) QPy_SETEXC(PyExc_OverflowError, msg)
-#if Py_VERSION_HEX >= 0x030e00000
-#    define QPy_ITERNEXT(iter, arg) (PyIter_NextItem(iter, arg) > 0)
-#else
-#    define QPy_ITERNEXT(iter, arg) QPy_SETVAL(*arg, PyIter_Next(iter))
-#endif
-#define QPy_TUPLE_GETITEM(tuple, item, i) !(item = PyTuple_GetItem(tuple, i))
-
-#define QPy_CACHE(self)   ((self)->cache)
-#define QPy_ENTRIES(self) ((self)->entries)
-#define QPy_SIZE(self)    ((self)->nentries)
-#define QPy_LEN(self)     ((self)->used_entries)
-#define QPy_GSIZE(self)   ((self)->group_size)
-#define QPy_TMPCACHE(self)    NULL
-#
 #endif // QPy_DEFS_H

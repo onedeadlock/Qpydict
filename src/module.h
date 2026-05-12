@@ -9,6 +9,18 @@
 #define Qpydict_module_name "Qpydict"
 #define Qpydict_module_doc  "A very fast Python dictionary"
 
+#define python_set_exception(exc, msg) PyErr_SetString(exc, msg)
+#define python_raise_badargument(msg)  PyErr_SetString(PyExc_TypeError, msg)
+#define python_raise_overflow(msg)     PyErr_SetString(PyExc_OverflowError, msg)
+
+#if Py_VERSION_HEX >= 0x030e00000
+#    define python_iterator_next(it, arg) (PyIter_NextItem(it, arg) > 0)
+#else
+#    define python_iterator_next(it, arg) (*(arg)=PyIter_Next(it))
+#endif
+
+#define python_tuple_getitem(tup, item, idx) !((item)=PyTuple_GetItem(tup, i))
+
 static int Qpydict_module_exec(PyObject *module);
 static PyObject *version(PyObject *module, PyObject *arg);
 

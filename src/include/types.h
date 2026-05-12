@@ -10,20 +10,11 @@
 #include <stdint.h>
 #include <inttypes.h>
 
-#ifndef local
-#    define local static
-#endif
-#ifndef local_inline
-#    define local_inline static inline FORCE_INLINE
-#endif
-
-#define QPy_UNUSED(x)    Py_UNUSED(x)
 #define QPy_T_SSIZE      Py_T_PYSSIZET
 #define QPy_ARRAY_SIZE   sizeof(0)
 #define QPy_CACHE_SIZE   sizeof(kvpair_t)
 #define QPy_DEFAULT_SIZE 0 // TODO: set
 
-typedef PyObject * QPy_PyObject;
 typedef Py_ssize_t ssize_t;
 typedef Py_hash_t  hash_t;
 
