@@ -19,7 +19,7 @@ typedef uintptr_t unsigned long int
 
 #define inc_entry_size(d) ++((d)->size)
 
-#ifndef QPy_IMPRAND
+#ifdef FORCE_TAG_RANDOM
 local_inline int __attribute__((pure)) ctag(const uint64_t v)
 {
     return ((v & 0xff) - ((v & 0xff) * 0x2041u >> 20) * 127) + 1;
@@ -76,10 +76,12 @@ local void caligned_free(void *memptr)
     return free(memstart);
 }
 
-local_inline void *
-aligned_malloc_set(const size_t   size,
-		   const uint16_t align_size,
-		   const int      fchar)
+local_inline void * aligned_malloc_set
+(
+	const size_t   size,
+	const uint16_t align_size,
+	const int      fchar
+)
 {
     void *ptr = NULL;
 
@@ -88,9 +90,11 @@ aligned_malloc_set(const size_t   size,
     return p;
 }
 
-local_inline void *
-aligned_calloc(const size_t   size,
-	       const uint16_t align_size)
+local_inline void *aligned_calloc
+(
+	const size_t   size,
+	const uint16_t align_size
+)
 {
     void *ptr = NULL;
 
@@ -99,14 +103,13 @@ aligned_calloc(const size_t   size,
     return ptr;
 }
 
-local_inline void *
-_cache_alloc(void *pptr, size_t size)
+local_inline void *_cache_alloc(void *pptr, size_t size)
 {
     void *ptr = NULL;
 
     assert(size != 0);
 
-#ifdef QPy_IMPRAND
+#ifdef FORCE_TAG_RANDOM
     ptr = aligned_malloc_set(size, NGROUP, QPy_EMPTY);
 #else
     ptr = aligned_calloc(size, NGROUP);
@@ -163,16 +166,20 @@ local_inline size_t prev_power_of_two(size_t n)
 	    );
 }
 
-local_inline size_t
-get_size_no_resize_trigger(const size_t size,
-			   const double lf)
+local_inline size_t get_size_no_resize_trigger
+(
+	const size_t size,
+	const double lf
+)
 {
     return next_power_of_two(size + (1 - lf) * size);
 }
 
-local_inline size_t
-try_size_requirement(const size_t size,
-		     const size_t max_object_size)
+local_inline size_t try_size_requirement
+(
+	const size_t size,
+	const size_t max_object_size
+)
 {
     assert(size < 1);
 
@@ -192,10 +199,12 @@ try_size_requirement(const size_t size,
     return try_size;
 }
 
-local_inline int
-key_generic_compare(const khpair_t  it,
-		    const PyObject *key,
-		    const hash_t    hash)
+local_inline int key_generic_compare
+(
+	const khpair_t  it,
+	const PyObject *key,
+	const hash_t    hash
+)
 {
     int cmp;
 
@@ -211,11 +220,13 @@ key_generic_compare(const khpair_t  it,
     return cmp;
 }
 
-locale_inline int
-dict_update_key_in_entry(QPyDictObject     *self,
-			 PyObject *restrict key,
-			 PyObject *restrict value,
-			 ssize_t j)
+locale_inline int dict_update_key_in_entry
+(
+	QPyDictObject     *self,
+	PyObject *restrict key,
+	PyObject *restrict value,
+	ssize_t j
+)
 {
     PyObject *tmp = self->entries.values[j];
 
@@ -226,13 +237,15 @@ dict_update_key_in_entry(QPyDictObject     *self,
     return 0;
 }
 
-locale_inline size_t
-dict_add_entry(QPyDictObject     *self,
-	       PyObject *restrict key,
-	       PyObject *restrict value,
-	       hash_t  hash,
-	       ssize_t tag,
-	       ssize_t j)
+locale_inline size_t dict_add_entry
+(
+	QPyDictObject     *self,
+	PyObject *restrict key,
+	PyObject *restrict value,
+	hash_t  hash,
+	ssize_t tag,
+	ssize_t j
+)
 {
     entry_t entries = self->entries;
 
@@ -250,8 +263,7 @@ dict_add_entry(QPyDictObject     *self,
     return 0;
 }
 
-local int dict_alloc_internal(QPyDictObject *self,
-			       ssize_t        size)
+local int dict_alloc_internal(QPyDictObject *self, ssize_t size)
 {
     if (size < 0)
 	return -1;
@@ -284,10 +296,12 @@ local int dict_alloc_internal(QPyDictObject *self,
 }
 
 
-local ssize_t
-lookup_insert_generic_nodeleted(QPyDictObject     *self,
-				PyObject *restrict key,
-				PyObject *restrict value)
+local ssize_t lookup_insert_generic_nodeleted
+(
+	QPyDictObject     *self,
+	PyObject *restrict key,
+	PyObject *restrict value
+)
 {
 	assert(NULL != self);
 	assert(NULL != key);
@@ -337,10 +351,12 @@ lookup_insert_generic_nodeleted(QPyDictObject     *self,
     QPy_UNREACHABLE();
 }
 
-locale_inline ssize_t
-lookup_insert_generic(QPyDictObject     *self,
-		      PyObject *restrict key,
-		      PyObject *restrict value)
+locale_inline ssize_t lookup_insert_generic
+(
+	QPyDictObject     *self,
+	PyObject *restrict key,
+	PyObject *restrict value
+)
 {
 	assert(NULL != self);
 	assert(NULL != key);
@@ -393,9 +409,11 @@ lookup_insert_generic(QPyDictObject     *self,
     QPy_UNREACHABLE();
 }
 
-locale_inline ssize_t
-lookup_generic(QPyDictObject *self,
-	       PyObject      *key)
+locale_inline ssize_t lookup_generic
+(
+	QPyDictObject *self,
+	PyObject      *key
+)
 {
 	assert(NULL != self);
 	assert(NULL != key);

@@ -14,7 +14,7 @@
 #    define local static
 #endif
 #ifndef local_inline
-#define local_inline static inline FORCE_INLINE
+#    define local_inline static inline FORCE_INLINE
 #endif
 
 #define QPy_UNUSED(x)    Py_UNUSED(x)
