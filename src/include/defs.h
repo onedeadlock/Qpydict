@@ -33,11 +33,11 @@ extern inline __forceinline uint64_t QPy_BSR(const uint64_t v)
 #define QPy_SCAN_MASK(v) QPy_FIXIDX(QPy_BSR(v))
 
 // Round up/down to a multiple of 2^d
-#define QPy_ALIGN(v, d)  ((v) - ((v) & (d)))
-#define QPy_ALIGNU(v, d) (((n) + (d) - 1) & ~((d) - 1))
+#define ALIGN(v, d)  ((v) - ((v) & (d)))
+#define ALIGNU(v, d) (((n) + (d) - 1) & ~((d) - 1))
 
 #if QPy_ALIGNED_LOAD
-#    define QPy_LOADALIGN(v) QPy_ALIGN(v, QPy_PWGROUP)
+#    define QPy_LOADALIGN(v) ALIGN(v, QPy_PWGROUP)
 #else
 #    define QPy_LOADALIGN(v) (v)
 #endif

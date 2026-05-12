@@ -20,7 +20,7 @@ typedef uintptr_t unsigned long int
 #define inc_entry_size(d) ++((d)->size)
 
 #ifndef QPy_IMPRAND
-QPy_INLINE(int) __attribute__((pure)) ctag(const uint64_t v)
+local_inline int __attribute__((pure)) ctag(const uint64_t v)
 {
     return ((v & 0xff) - ((v & 0xff) * 0x2041u >> 20) * 127) + 1;
 }
@@ -28,17 +28,16 @@ QPy_INLINE(int) __attribute__((pure)) ctag(const uint64_t v)
 #    define ctag(v) ((v) & 0xff)
 #endif
 
-QPy_INLINE(size_t) __attribute__((pure))
+local_inline size_t __attribute__((pure))
 find_group_from_hash(const hash_t hash,
 		     const size_t size)
 {
     const size_t group = QPy_ALIGN(hash & (size - 1));
 
-    return group / QPy_GROUP;
+    return group / NGROUP;
 }
 
-QPy_WARN_UNUSED(void *)
-caligned_malloc(void          *mempptr,
+local void *caligned_malloc(void          *mempptr,
 		const uint16_t align_size,
 		const size_t   size)
 {
@@ -54,17 +53,19 @@ caligned_malloc(void          *mempptr,
 
     void *ptr = malloc(size + max_offset_size);
     if (NULL == ptr)
-	return ptr;
-    // align memory to align size
-    void *kptr = QPy_ALIGNU((uintptr_t)ptr + max_offset_size, align_size);
-    // save align size (used for further memory op)
+		return ptr;
+    
+	// align memory
+    void *kptr = ALIGNU((uintptr_t)ptr + max_offset_size, align_size);
+    
+	// save align size (used for further memory op)
     ((uint16_t *)kptr)[-1] = (uintptr_t)kptr - (uintptr_t)ptr;
 
     DDPTR(mempptr) = kptr;
     return kptr;
 }
 
-static void caligned_free(void *memptr)
+local void caligned_free(void *memptr)
 {
     if (memptr == NULL)
 	return;
@@ -75,7 +76,7 @@ static void caligned_free(void *memptr)
     return free(memstart);
 }
 
-QPy_WARN_UNUSED(void *)
+local_inline void *
 aligned_malloc_set(const size_t   size,
 		   const uint16_t align_size,
 		   const int      fchar)
@@ -87,18 +88,18 @@ aligned_malloc_set(const size_t   size,
     return p;
 }
 
-QPy_WARN_UNUSED(void *)
+local_inline void *
 aligned_calloc(const size_t   size,
 	       const uint16_t align_size)
 {
     void *ptr = NULL;
 
     if (caligned_malloc(&ptr, align_size, size))
-	return memset(ptr, 0, size);
+		return memset(ptr, 0, size);
     return ptr;
 }
 
-QPy_WARN_UNUSED(void *)
+local_inline void *
 _cache_alloc(void *pptr, size_t size)
 {
     void *ptr = NULL;
@@ -106,16 +107,16 @@ _cache_alloc(void *pptr, size_t size)
     assert(size != 0);
 
 #ifdef QPy_IMPRAND
-    ptr = aligned_malloc_set(size, QPy_GROUP, QPy_EMPTY);
+    ptr = aligned_malloc_set(size, NGROUP, QPy_EMPTY);
 #else
-    ptr = aligned_calloc(size, QPy_GROUP);
+    ptr = aligned_calloc(size, NGROUP);
 #endif
 
     DDPTR(pptr) = ptr;
     return ptr;
 }
 
-QPy_WARN_UNUSED(void *) _malloc(void *pptr, size_t size)
+local void * _malloc(void *pptr, size_t size)
 {
     void *ptr = NULL;
 
@@ -131,12 +132,12 @@ QPy_WARN_UNUSED(void *) _malloc(void *pptr, size_t size)
     return ptr;
 }
 
-static inline void _free(void *ptr)
+local void _free(void *ptr)
 {
     return free(ptr);
 }
 
-QPy_INLINE(size_t) next_power_of_two(size_t n)
+local_inline size_t next_power_of_two(size_t n)
 {
     assert(n != 0);
 
@@ -149,7 +150,7 @@ QPy_INLINE(size_t) next_power_of_two(size_t n)
 	    );
 }
 
-QPy_INLINE(size_t) prev_power_of_two(size_t n)
+local_inline size_t prev_power_of_two(size_t n)
 {
     assert(n != 0);
 
@@ -162,14 +163,14 @@ QPy_INLINE(size_t) prev_power_of_two(size_t n)
 	    );
 }
 
-QPy_INLINE(size_t)
+local_inline size_t
 get_size_no_resize_trigger(const size_t size,
 			   const double lf)
 {
     return next_power_of_two(size + (1 - lf) * size);
 }
 
-QPy_INLINE(size_t)
+local_inline size_t
 try_size_requirement(const size_t size,
 		     const size_t max_object_size)
 {
@@ -191,7 +192,7 @@ try_size_requirement(const size_t size,
     return try_size;
 }
 
-QPy_INLINE(int)
+local_inline int
 key_generic_compare(const khpair_t  it,
 		    const PyObject *key,
 		    const hash_t    hash)
@@ -210,7 +211,7 @@ key_generic_compare(const khpair_t  it,
     return cmp;
 }
 
-QPy_INLINE(int)
+locale_inline int
 dict_update_key_in_entry(QPyDictObject     *self,
 			 PyObject *restrict key,
 			 PyObject *restrict value,
@@ -225,7 +226,7 @@ dict_update_key_in_entry(QPyDictObject     *self,
     return 0;
 }
 
-QPy_INLINE(ssize_t)
+locale_inline size_t
 dict_add_entry(QPyDictObject     *self,
 	       PyObject *restrict key,
 	       PyObject *restrict value,
@@ -235,7 +236,7 @@ dict_add_entry(QPyDictObject     *self,
 {
     entry_t entries = self->entries;
 
-    assert(j * QPy_GROUP <= self->capacity);
+    assert(j * NGROUP <= self->capacity);
     assert(NULL == entries.values[j]);
     assert(NULL == entries.kh[j].key);
 
@@ -249,7 +250,7 @@ dict_add_entry(QPyDictObject     *self,
     return 0;
 }
 
-static int dict_alloc_internal(QPyDictObject *self,
+local int dict_alloc_internal(QPyDictObject *self,
 			       ssize_t        size)
 {
     if (size < 0)
@@ -277,18 +278,21 @@ static int dict_alloc_internal(QPyDictObject *self,
     self->entries.kh     = kh;
 
     self.capacity = n;
-    self.group_capacity = n / QPy_GROUP;
+    self.group_capacity = n / NGROUP;
 
     return 0;
 }
 
 
-QPy_PTR_INLINE(ssize_t)
+local ssize_t
 lookup_insert_generic_nodeleted(QPyDictObject     *self,
 				PyObject *restrict key,
 				PyObject *restrict value)
 {
-    const hash_t hash  = PyObject_Hash(key);
+	assert(NULL != self);
+	assert(NULL != key);
+
+	const hash_t hash  = PyObject_Hash(key);
 
     if (hash < 0)
 	return -1;
@@ -310,7 +314,7 @@ lookup_insert_generic_nodeleted(QPyDictObject     *self,
 		int j   = mm_scan_mask(mask);
 		int cmp = key_generic_compare(it+j, key, hash);
 
-		if (QPy_UNLIKELY(cmp < 0))
+		if (UNLIKELY(cmp < 0))
 		    return -1;
 		if (cmp)
 		    return dict_update_key_in_entry(self,
@@ -319,7 +323,7 @@ lookup_insert_generic_nodeleted(QPyDictObject     *self,
 						    j);
 	    }
 	mask = mm_test_empty(group); // TODO
-	if (QPy_LIKELY(mask))
+	if (LIKELY(mask))
 	    return dict_add_entry(self,
 				  key,
 				  value,
@@ -333,12 +337,15 @@ lookup_insert_generic_nodeleted(QPyDictObject     *self,
     QPy_UNREACHABLE();
 }
 
-QPy_PTR_INLINE(ssize_t)
+locale_inline ssize_t
 lookup_insert_generic(QPyDictObject     *self,
 		      PyObject *restrict key,
 		      PyObject *restrict value)
 {
-    const hash_t hash      = PyObject_Hash(key);
+	assert(NULL != self);
+	assert(NULL != key);
+
+	const hash_t hash      = PyObject_Hash(key);
 
     if (hash < 0)
 	return -1;
@@ -360,7 +367,7 @@ lookup_insert_generic(QPyDictObject     *self,
 		int j   = mm_scan_mask(mask);
 		int cmp = key_generic_compare(it+j, key, hash);
 
-		if (QPy_UNLIKELY(cmp < 0))
+		if (UNLIKELY(cmp < 0))
 		    return -1;
 		if (cmp)
 		    return dict_update_key_in_entry(self,
@@ -371,7 +378,7 @@ lookup_insert_generic(QPyDictObject     *self,
 	if (k < 0)
 	    k = mm_find_empty_slot(group); // TODO
 
-	if (QPy_LIKELY(mm_test_empty_fast(group)))
+	if (LIKELY(mm_test_empty_fast(group)))
 	    break; // TODO
 	probe_next_dict_slot(probe, cnt);
     } while (true);
@@ -386,11 +393,14 @@ lookup_insert_generic(QPyDictObject     *self,
     QPy_UNREACHABLE();
 }
 
-QPy_PTR_INLINE(ssize_t)
+locale_inline ssize_t
 lookup_generic(QPyDictObject *self,
 	       PyObject      *key)
 {
-    const hash_t hash      = PyObject_Hash(key);
+	assert(NULL != self);
+	assert(NULL != key);
+
+	const hash_t hash      = PyObject_Hash(key);
 
     if (hash < 0)
 	return -1;
@@ -412,12 +422,12 @@ lookup_generic(QPyDictObject *self,
 		int j   = mm_scan_mask(mask);
 		int cmp = key_generic_compare(it+j, key, hash);
 
-		if (QPy_UNLIKELY(cmp < 0))
+		if (UNLIKELY(cmp < 0))
 		    return -1;
 		if (cmp)
 		    return 0;
 	    }
-	if (QPy_LIKELY(mm_test_empty_fast(group)))
+	if (LIKELY(mm_test_empty_fast(group)))
 	    break;
 	probe_next_dict_slot(probe, cnt);
     } while (true);
