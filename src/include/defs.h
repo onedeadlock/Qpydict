@@ -124,4 +124,6 @@ static inline __forceinline uint64_t BSF(const uint64_t v)
 #    define local_inline static inline force_inline
 #endif
 
+#undef has_builtin
+#undef has_attribute
 #endif // QPy_DEFS_H
