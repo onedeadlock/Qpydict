@@ -17,6 +17,19 @@
 #if __has_builtin(__builtin_unreachable)
 #endif
 
+#if __has_builtin(__builtin_add_overflow_p)
+#endif
+
+#if __has_builtin(__builtin_mul_overflow_p)
+#endif
+
+#ifndef __has_attribute
+  #define __has_attribute(x) 0 
+#endif
+
+#if __has_attribute(__always_inline__)
+#endif
+
 #if defined(__clang__) || defined(__GNUC__) || defined(__MINGW32__) || defined(__MINGW64__)
 #    define QPy_GCL_CC 1
 #elif defined(_MSC_VER)
