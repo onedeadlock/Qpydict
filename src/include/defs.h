@@ -4,15 +4,15 @@
     #include <windows.h>
 #endif
 
-#if __has_attribute(__always_inline__)
-#endif
+#define OR ||
+#define __OR OR
 
-#if defined(__clang__) || defined(__GNUC__) || defined(__MINGW32__) || defined(__MINGW64__)
-#    define GCC   1
+#if defined(__clang__) OR defined(__GNUC__) OR defined(__MINGW32__) OR defined(__MINGW64__)
+#    define HAVE_GCC_COMPILER   1
 #elif defined(_MSC_VER)
-#    define MSVC  1
+#    define HAVE_MVSC_COMPILER  1
 #elif defined(INTEL_LLVM_COMPILER)
-#    define INTEL 1
+#    define HAVE_INTEL_COMPILER 1
 #endif
 
 #ifndef __has_builtin
@@ -22,7 +22,16 @@
   #define __has_attribute(x) 0 
 #endif
 
-#if __has_builtin(__builtin_expect)
+#if __has_attribute(__always_inline__) __OR HAVE_GCC_COMPILER
+#    define force_inline __attribute__((always_inline))
+#elif HAVE_MVSC_COMPILER
+#    define force_inline __forceinline
+#else 
+#    define force_inline 
+#endif
+
+#if __has_builtin(__builtin_expect) __OR HAVE_GCC_COMPILER
+#    define UNLIKELY() __builtin_expect()
 #endif
 
 #if __has_builtin(__builtin_ctzll)
