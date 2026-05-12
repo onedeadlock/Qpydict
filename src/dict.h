@@ -28,12 +28,13 @@ local_inline int PURE(ctag)(const uint64_t v)
 #    define ctag(v) ((v) & 0xff)
 #endif
 
-local_inline
-size_t PURE(find_group_from_hash)(const hash_t hash, onst size_t size)
+local_inline size_t PURE(find_group_from_hash)
+    (
+     const hash_t hash,
+     const size_t size
+     )
 {
-    const size_t group = ALIGN(hash & (size - 1));
-
-    return group / NGROUP;
+    return ALIGN(hash & (size - 1), NGROUP) / NGROUP;
 }
 
 warn_unused local void *caligned_malloc

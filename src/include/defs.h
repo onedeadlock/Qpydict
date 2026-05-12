@@ -93,7 +93,7 @@ static inline __forceinline uint64_t BSF(const uint64_t v)
 
 #if has_attribute(__always_inline__)
 #    define force_inline __attribute__((always_inline))
-#elif HAVE_MVSC_COMPILER
+#elif HAVE_MSVC_COMPILER
 #    define force_inline __forceinline
 #else 
 #    define force_inline 
