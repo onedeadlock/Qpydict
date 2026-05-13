@@ -9,17 +9,15 @@
 
 #ifndef QPy_MM_UNSUPPORTED
 
-#ifndef UINTPTR_MAX
-typedef uintptr_t unsigned long int
-#endif
 #define DDPTR(dptr) (*(void **)(dptr))
 
+#ifndef
 #define dict_slot(d, p, i) (((p) + (i)) & ((d)->group_capacity - 1))
 #define probe_next_dict_slot(p, c) ((p) += ((c)++) + 1)
 
 #define inc_entry_size(d) ++((d)->size)
 
-#ifdef FORCE_TAG_RANDOM
+#ifdef CACHE_TAGB2
 local_inline int PURE(ctag)(const uint64_t v)
 {
     return ((v & 0xff) - ((v & 0xff) * 0x2041u >> 20) * 127) + 1;
@@ -39,7 +37,7 @@ local_inline size_t PURE(find_group_from_hash)
 
 warn_unused local void *caligned_malloc
 (
- void          *mempptr,
+ void          *memdptr,
  const uint16_t align_size,
  const size_t   size
  )
@@ -64,7 +62,7 @@ warn_unused local void *caligned_malloc
 	// save align size (used for further memory op)
     ((uint16_t *)kptr)[-1] = (uintptr_t)kptr - (uintptr_t)ptr;
 
-    DDPTR(mempptr) = kptr;
+    DDPTR(memdptr) = kptr;
     return kptr;
 }
 
@@ -102,29 +100,34 @@ local_inline void *aligned_calloc
     void *ptr = NULL;
 
     if (caligned_malloc(&ptr, align_size, size))
-		return memset(ptr, 0, size);
+	return memset(ptr, 0, size);
     return ptr;
 }
 
 warn_unused local_inline
-void *_cache_alloc(void *pptr, size_t size)
+void *_cache_alloc(void *dptr, size_t size)
 {
     void *ptr = NULL;
 
     assert(size != 0);
 
-#ifdef FORCE_TAG_RANDOM
+#ifdef CACHE_TAGB2
     ptr = aligned_malloc_set(size, NGROUP, QPy_EMPTY);
 #else
     ptr = aligned_calloc(size, NGROUP);
 #endif
 
-    DDPTR(pptr) = ptr;
+    DDPTR(dptr) = ptr;
     return ptr;
 }
 
+local_inline void _cache_free(void *ptr)
+{
+    return caligned_free(ptr);
+}
+
 warn_unused local_inline
-void * _malloc(void *pptr, size_t size)
+void * _malloc(void *dptr, size_t size)
 {
     void *ptr = NULL;
 
@@ -136,7 +139,7 @@ void * _malloc(void *pptr, size_t size)
     ptr = malloc(size);
 #endif
 
-    DDPTR(pptr) = ptr;
+    DDPTR(dptr) = ptr;
     return ptr;
 }
 
@@ -177,7 +180,7 @@ local_inline size_t get_size_no_resize_trigger
 	const double lf
 )
 {
-    return next_power_of_two(size + (1 - lf) * size);
+    return next_power_of_two(size / lf);
 }
 
 local_inline size_t try_size_requirement
@@ -193,11 +196,10 @@ local_inline size_t try_size_requirement
     if (check_if_safe_mul(try_size, max_object_size, (size_t)0))
 	{
 	    // try_size would overflow
-#        if QPy_ENFORCE_EXACT_SIZE
+#        if USE_EXACT_SIZE
 	    return 0;
 #	 else
-	    // return initial size; object will trigger an early resize
-	    return size;
+	    return size; // object will trigger an early resize
 #	 endif
 	}
 
@@ -206,9 +208,9 @@ local_inline size_t try_size_requirement
 
 local_inline int key_generic_compare
 (
-	const khpair_t  it,
-	const PyObject *key,
-	const hash_t    hash
+	const khpair_t it,
+	const Type    *key,
+	const hash_t   hash
 )
 {
     int cmp;
@@ -227,13 +229,13 @@ local_inline int key_generic_compare
 
 locale_inline int dict_update_key_in_entry
 (
-	QPyDictObject     *self,
-	PyObject *restrict key,
-	PyObject *restrict value,
+	QPyDictObject  *self,
+	Type *restrict key,
+	Type *restrict value,
 	ssize_t j
 )
 {
-    PyObject *tmp = self->entries.values[j];
+    Type *tmp = self->entries.values[j];
 
     self->entries.values[j] = value;
     Py_XDECREF(tmp);
@@ -244,9 +246,9 @@ locale_inline int dict_update_key_in_entry
 
 locale_inline size_t dict_add_entry
 (
-	QPyDictObject     *self,
-	PyObject *restrict key,
-	PyObject *restrict value,
+	QPyDictObject *self,
+	Type *restrict key,
+	Type *restrict value,
 	hash_t  hash,
 	ssize_t tag,
 	ssize_t j
@@ -282,7 +284,7 @@ local int dict_alloc_internal(QPyDictObject *self, ssize_t size)
     void *kh, *v, *c;
 
     if (NULL == _cache_alloc(&c, n) ||
-	NULL == _malloc(&v,  n * sizeof(PyObject *)) ||
+	NULL == _malloc(&v,  n * sizeof(Type *)) ||
 	NULL == _malloc(&kh, n * sizeof(khpair_t)))
 	{
 	    _cache_free(c);
@@ -303,15 +305,15 @@ local int dict_alloc_internal(QPyDictObject *self, ssize_t size)
 
 local ssize_t lookup_insert_generic_nodeleted
 (
-	QPyDictObject     *self,
-	PyObject *restrict key,
-	PyObject *restrict value
+	QPyDictObject  *self,
+	Type *restrict key,
+	Type *restrict value
 )
 {
 	assert(NULL != self);
 	assert(NULL != key);
 
-	const hash_t hash  = PyObject_Hash(key);
+	const hash_t hash  = HASH(self, key);
 
     if (hash < 0)
 	return -1;
@@ -358,15 +360,15 @@ local ssize_t lookup_insert_generic_nodeleted
 
 locale_inline ssize_t lookup_insert_generic
 (
-	QPyDictObject     *self,
-	PyObject *restrict key,
-	PyObject *restrict value
+	QPyDictObject *self,
+	Type *restrict key,
+	Type *restrict value
 )
 {
 	assert(NULL != self);
 	assert(NULL != key);
 
-	const hash_t hash      = PyObject_Hash(key);
+	const hash_t hash  = HASH(self, key);
 
     if (hash < 0)
 	return -1;
@@ -423,7 +425,7 @@ locale_inline ssize_t lookup_generic
 	assert(NULL != self);
 	assert(NULL != key);
 
-	const hash_t hash      = PyObject_Hash(key);
+	const hash_t hash  = HASH(self, key);
 
     if (hash < 0)
 	return -1;

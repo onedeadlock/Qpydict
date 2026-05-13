@@ -124,6 +124,14 @@ static inline __forceinline uint64_t BSF(const uint64_t v)
 #    define local_inline static inline force_inline
 #endif
 
+#ifndef NO_PYAPI
+#    define HASH(self, key) (self)->hash(key)
+#    define CMP(self, t, u) (self)->cmp(t, u)
+#else
+#    define HASH(self, key) PyObject_Hash(key)
+#    define CMP(self, t, u) 0
+#endif
+
 #undef has_builtin
 #undef has_attribute
 #endif // QPy_DEFS_H
