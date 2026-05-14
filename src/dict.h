@@ -10,12 +10,14 @@
 #ifndef QPy_MM_UNSUPPORTED
 
 #define DPTR(dptr) (*(void **)(dptr))
+#define DCR(x)     --(x)
+#define get_NEXT_GROUP(x) ((x) += NGROUP)
 
-#ifndef
+#define out_of_range_lf(lf) ((lf) < .3 OR (lf) > 1.)
+#define inc_entry_size(d) ++((d)->used_size)
+
 #define dict_slot(d, p, i) (((p) + (i)) & ((d)->group_capacity - 1))
 #define probe_next_dict_slot(p, c) ((p) += ((c)++) + 1)
-
-#define inc_entry_size(d) ++((d)->used_size)
 
 #ifndef CACHE_TAG_NOZERO
 local_inline int PURE(ctag)(const uint64_t v)
@@ -55,14 +57,14 @@ warn_unused local void *caligned_malloc
     void *ptr = malloc(size + max_offset_size);
     if (NULL == ptr)
 		return ptr;
-    
+
 	// align memory
     void *kptr = ALIGNU((uintptr_t)ptr + max_offset_size, align_size);
-    
+
 	// save align size (used for further memory op)
     ((uint16_t *)kptr)[-1] = (uintptr_t)kptr - (uintptr_t)ptr;
 
-    DPTR(memdptr) = kptr;
+    DDPTR(memdptr) = kptr;
     return kptr;
 }
 
@@ -117,7 +119,7 @@ void *_cache_alloc(void *dptr, size_t size)
     ptr = aligned_calloc(size, NGROUP);
 #endif
 
-    DPTR(dptr) = ptr;
+    DDPTR(dptr) = ptr;
     return ptr;
 }
 
@@ -139,7 +141,7 @@ void * _malloc(void *dptr, size_t size)
     ptr = malloc(size);
 #endif
 
-    DPTR(dptr) = ptr;
+    DDPTR(dptr) = ptr;
     return ptr;
 }
 
@@ -192,7 +194,7 @@ local_inline size_t try_size_requirement
 {
     assert(size != 0);
 
-    size_t try_size = get_size_no_resize_trigger(size, ld);
+    size_t try_size = get_size_no_resize_trigger(size, lf);
 
     if (check_if_safe_mul(try_size, max_object_size, (size_t)0))
 	{
@@ -281,9 +283,9 @@ local_inline void dict_set
     float           lf
     )
 {
-    assert(NULL == dict->entries.values);
-    assert(NULL == dict->entries.kh);
-    
+    assert(NULL != dict);
+    assert(0 == dict->capacity);
+
     dict->entries.cache  = che;
     dict->entries.values = val;
     dict->entries.kh     = kh;
@@ -296,6 +298,9 @@ local_inline void dict_set
 
 local_inline void dict_unset(QPyDictObject *dict)
 {
+    assert(NULL != dict);
+    assert(0 == dict->capacity);
+
     dict->entries.cache  = empty_tag_full_group;
     dict->entries.values = NULL;
     dict->entries.kh     = NULL;
@@ -308,11 +313,13 @@ local_inline void dict_unset(QPyDictObject *dict)
 
 local_inline const ssize_t dict_size(QPyDictObject *dict)
 {
+    assert(NULL != dict);
     return dict->used_size;
 }
 
 local_inline const ssize_t dict_capacity(QPyDictObject *dict)
 {
+    assert(NULL != dict);
     return dict->capacity;
 }
 
@@ -328,14 +335,17 @@ local_inline int dict_isunused(QPyDictObject *dict)
     return dict->capacity == 0;
 }
 
-local_inline int dict_expl_set_load_factor(QPyDictObject *dict, float lf)
+local_inline int dict_explicit_set_load_factor(QPyDictObject *dict, float lf)
 {
     assert(NULL != dict);
 
-    if (NULL == lf)
+    if (out_of_range_lf(lf))
 	return -1;
 
-    dict->max_size = dict->capacity * lf; // NOTE: if old_lf greater than new_lf and size does meet the new_lf criteria, a rehash must occur in the next call to a dict mutating function.
+    /** if old_lf is greater than new_lf and size does not
+	meet the new_lf criteria, a rehash must occur on
+	the next call to a dict mutating function. */
+    dict->max_size = dict->capacity * lf;
     return 0;
 }
 
@@ -348,7 +358,7 @@ dict_alloc_internal(
 {
     assert(NULL != dict);
 
-    if (size < 0 OR lf < .3 OR lf > 1.)
+    if (size < 0 OR out_of_range_lf(lf))
 	return -1;
     if (0 == size)
 	{
@@ -418,13 +428,63 @@ local void *dict_merge(QPyDictObject *dict, QPyDictObject *dict0)
     return NULL;
 }
 
-local void dict_visit_all_do
+local_inline visit_t new_visit_struct(QPyDictObject *dict)
+{
+    visit_t v = {
+	.group = dict->entries.cache,
+	.size  = dict->group_capacity,
+	.mask  = 0
+    };
+
+    return v;
+}
+local_inline int visit_next_nonempty_group(visit_t *v)
+{
+    assert(NULL != v);
+    group = v->group;
+    if (NULL == group)
+	return 0;
+    assert(v->size < 1);
+
+    while (true);
+	{
+	    v->mask = mm_test_hasentry(mm_load(v->group)); // TODO
+	    if (LIKELY(v->mask))
+		return 1;
+	    if (DCR(v->size))
+		return (v->group = NULL) != NULL;
+
+	    get_NEXT_GROUP(v->group);
+	}
+    UNREACHABLE();
+}
+
+local warn_unused int dict_visit_all_do
 (
-    QPyDictObject *UNUSED(dict),
-    int (call_func *)(void *, uintmax_t, double) UNUSED();
+    QPyDictObject *dict,
+    const void *arg,
+    int (do_func *)(const khpair_t kh, const Type *val, void *arg);
     )
 {
-    // TODO
+    assert(NULL != dict);
+
+    visit_t v   = new_visit_struct(dict);
+    ssize_t ret = 1, i = 0, j = 0;
+
+    // TODO:  mark CRITICAL SECTION
+    while (visit_next_nonempty_group(&v))
+	{
+	    while (LIKELY(mask AND ret))
+		{
+		    j   = i * NGROUP + mm_scan_mask(mask);
+		    ret = do_func(dict->entries.kh[j],
+				  dict->entries.values[j],
+				  arg);
+		    mask &= mask - 1;
+		}
+	    i++;
+	}
+    return -!ret;
 }
 
 local ssize_t lookup_insert_generic_nodeleted

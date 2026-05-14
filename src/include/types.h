@@ -28,6 +28,8 @@ typedef long int ssize_t;
 typedef unsigned long int hash_t
 #endif
 
+typedef uint8_t cache_t;
+
 typedef struct {
     Type   *key;
     hash_t  hash;
@@ -36,11 +38,11 @@ typedef struct {
 typedef struct {
     struct 
     {
-	    uint8_t *cache;
+	    cache_t *cache;
 	    Type   **values;
     };
     khpair_t *kh; // key & value pair
-    uint8_t  *kind; // kind of keys in dict
+    uint8_t  kind; // kind of keys in dict
 } entry_t;
 
 typedef struct {
@@ -60,12 +62,19 @@ typedef struct {
 #endif
 } QPyDictObject;
 
+typedef struct {
+    cache_t *group;
+    ssize_t  size;
+    mask_t   mask;
+} visit_t;
+
 #define y8(y) y, y, y, y, y, y, y, y
 static const uint8_t
 empty_tag_full_group[NGROUP_MAX] = {
     y8(EMPTY_ENTRY), y8(EMPTY_ENTRY),
     y8(EMPTY_ENTRY), y8(EMPTY_ENTRY)
 };
+empty_tag_full_group[0] = 1;
 #undef y8
 #endif
 
