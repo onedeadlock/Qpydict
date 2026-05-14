@@ -47,14 +47,26 @@ typedef struct {
 #ifndef NO_PYAPI
     PyObject_HEAD
 #endif
-    entry_t entries; 
+    entry_t entries;
+    uintmax_t dict_id;
     ssize_t capacity;
     ssize_t group_capacity;
-    ssize_t size;
+    ssize_t used_size; // number of put entries
+    size_t  max_size; // maximum size before resize is triggered
 #ifdef NO_PYAPI
-    hash_t (hash *)(Type *key);
-    int    (cmp  *)(Type *t, Type *u);
+    hash_t (hash  *)(Type *key);
+    int    (cmp   *)(Type *t, Type *u);
+    void   (clear *)(Type *key, Type *value);
 #endif
 } QPyDictObject;
+
+#define y8(y) y, y, y, y, y, y, y, y
+static const uint8_t
+empty_tag_full_group[NGROUP_MAX] = {
+    y8(EMPTY_ENTRY), y8(EMPTY_ENTRY),
+    y8(EMPTY_ENTRY), y8(EMPTY_ENTRY)
+};
+#undef y8
+#endif
 
 #endif // QPy_TYPES_H

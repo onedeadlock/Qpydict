@@ -9,15 +9,15 @@
 
 #ifndef QPy_MM_UNSUPPORTED
 
-#define DDPTR(dptr) (*(void **)(dptr))
+#define DPTR(dptr) (*(void **)(dptr))
 
 #ifndef
 #define dict_slot(d, p, i) (((p) + (i)) & ((d)->group_capacity - 1))
 #define probe_next_dict_slot(p, c) ((p) += ((c)++) + 1)
 
-#define inc_entry_size(d) ++((d)->size)
+#define inc_entry_size(d) ++((d)->used_size)
 
-#ifdef CACHE_TAGB2
+#ifndef CACHE_TAG_NOZERO
 local_inline int PURE(ctag)(const uint64_t v)
 {
     return ((v & 0xff) - ((v & 0xff) * 0x2041u >> 20) * 127) + 1;
@@ -37,10 +37,10 @@ local_inline size_t PURE(find_group_from_hash)
 
 warn_unused local void *caligned_malloc
 (
- void          *memdptr,
- const uint16_t align_size,
- const size_t   size
- )
+    void          *memdptr,
+    const uint16_t align_size,
+    const size_t   size
+    )
 {
     const uint16_t align_offset_size = sizeof(uint16_t);
     const uint16_t align_fault       = align_size - 1;
@@ -62,7 +62,7 @@ warn_unused local void *caligned_malloc
 	// save align size (used for further memory op)
     ((uint16_t *)kptr)[-1] = (uintptr_t)kptr - (uintptr_t)ptr;
 
-    DDPTR(memdptr) = kptr;
+    DPTR(memdptr) = kptr;
     return kptr;
 }
 
@@ -111,13 +111,13 @@ void *_cache_alloc(void *dptr, size_t size)
 
     assert(size != 0);
 
-#ifdef CACHE_TAGB2
+#ifndef CACHE_TAG_NOZERO
     ptr = aligned_malloc_set(size, NGROUP, QPy_EMPTY);
 #else
     ptr = aligned_calloc(size, NGROUP);
 #endif
 
-    DDPTR(dptr) = ptr;
+    DPTR(dptr) = ptr;
     return ptr;
 }
 
@@ -139,7 +139,7 @@ void * _malloc(void *dptr, size_t size)
     ptr = malloc(size);
 #endif
 
-    DDPTR(dptr) = ptr;
+    DPTR(dptr) = ptr;
     return ptr;
 }
 
@@ -177,7 +177,7 @@ local_inline size_t prev_power_of_two(size_t n)
 local_inline size_t get_size_no_resize_trigger
 (
 	const size_t size,
-	const double lf
+	const float   lf
 )
 {
     return next_power_of_two(size / lf);
@@ -186,12 +186,13 @@ local_inline size_t get_size_no_resize_trigger
 local_inline size_t try_size_requirement
 (
 	const size_t size,
-	const size_t max_object_size
+	const size_t max_object_size,
+	const float  lf
 )
 {
     assert(size != 0);
 
-    size_t try_size = get_size_no_resize_trigger(size, 1.0);
+    size_t try_size = get_size_no_resize_trigger(size, ld);
 
     if (check_if_safe_mul(try_size, max_object_size, (size_t)0))
 	{
@@ -229,15 +230,15 @@ local_inline int key_generic_compare
 
 locale_inline int dict_update_key_in_entry
 (
-	QPyDictObject  *self,
+	QPyDictObject  *dict,
 	Type *restrict key,
 	Type *restrict value,
 	ssize_t j
 )
 {
-    Type *tmp = self->entries.values[j];
+    Type *tmp = dict->entries.values[j];
 
-    self->entries.values[j] = value;
+    dict->entries.values[j] = value;
     Py_XDECREF(tmp);
     Py_XDECREF(key); // key already exist
 
@@ -246,7 +247,7 @@ locale_inline int dict_update_key_in_entry
 
 locale_inline size_t dict_add_entry
 (
-	QPyDictObject *self,
+	QPyDictObject *dict,
 	Type *restrict key,
 	Type *restrict value,
 	hash_t  hash,
@@ -254,82 +255,205 @@ locale_inline size_t dict_add_entry
 	ssize_t j
 )
 {
-    entry_t entries = self->entries;
+    entry_t entries = dict->entries;
 
-    assert(j * NGROUP <= self->capacity);
-    assert(NULL == entries.values[j]);
-    assert(NULL == entries.kh[j].key);
+    assert(j * NGROUP <= dict->capacity);
+    assert(NULL != entries.values[j]);
+    assert(NULL != entries.kh[j]->key);
 
-    entries.cache[j]  = tag;
-    entries.values[j] = value;
+    entries.cache[j]    = tag;
+    entries.values[j]   = value;
+    entries.kh[j]->key  = key;
+    entries.kh[j]->hash = hash;
 
-    entries.kh[j].key  = key;
-    entries.kh[j].hash = hash;
-
-    inc_entry_size(self);
+    inc_entry_size(dict);
     return 0;
 }
 
-local int dict_alloc_internal(QPyDictObject *self, ssize_t size)
+local_inline void dict_set
+(
+    QPyDictObject  *dict,
+    void * restrict che,
+    void * restrict val,
+    void * restrict kh,
+    ssize_t         cap,
+    ssize_t         size,
+    float           lf
+    )
 {
-    if (size < 0)
+    assert(NULL == dict->entries.values);
+    assert(NULL == dict->entries.kh);
+    
+    dict->entries.cache  = che;
+    dict->entries.values = val;
+    dict->entries.kh     = kh;
+
+    dict->group_capacity = cap / NGROUP;
+    dict->capacity       = cap;
+    dict->max_size       = (lf * cap) + 0.5;
+    dict->used_size      = size;
+}
+
+local_inline void dict_unset(QPyDictObject *dict)
+{
+    dict->entries.cache  = empty_tag_full_group;
+    dict->entries.values = NULL;
+    dict->entries.kh     = NULL;
+
+    dict->group_capacity = 0;
+    dict->capacity       = 0;
+    dict->max_size       = 0;
+    dict->used_size      = 0;
+}
+
+local_inline const ssize_t dict_size(QPyDictObject *dict)
+{
+    return dict->used_size;
+}
+
+local_inline const ssize_t dict_capacity(QPyDictObject *dict)
+{
+    return dict->capacity;
+}
+
+local_inline int dict_isempty(QPyDictObject *dict)
+{
+    assert(NULL != dict);
+    return dict->capacity == 0;
+}
+
+local_inline int dict_isunused(QPyDictObject *dict)
+{
+    assert(NULL != dict);
+    return dict->capacity == 0;
+}
+
+local_inline int dict_expl_set_load_factor(QPyDictObject *dict, float lf)
+{
+    assert(NULL != dict);
+
+    if (NULL == lf)
+	return -1;
+
+    dict->max_size = dict->capacity * lf; // NOTE: if old_lf greater than new_lf and size does meet the new_lf criteria, a rehash must occur in the next call to a dict mutating function.
+    return 0;
+}
+
+local int
+dict_alloc_internal(
+		    QPyDictObject *dict,
+		    const ssize_t size,
+		    const float   lf
+		    )
+{
+    assert(NULL != dict);
+
+    if (size < 0 OR lf < .3 OR lf > 1.)
 	return -1;
     if (0 == size)
-	return 0;
+	{
+	    dict_unset(dict);
+	    return 0;
+	}
 
-    size_t n = try_size_requirement(size, sizeof(khpair_t));
+    const size_t n = try_size_requirement(size, sizeof(khpair_t), lf);
     if (0 == n)
 	return -1;
 
     void *kh, *v, *c;
 
-    if (NULL == _cache_alloc(&c, n) ||
-	NULL == _malloc(&v,  n * sizeof(Type *)) ||
-	NULL == _malloc(&kh, n * sizeof(khpair_t)))
+    if (NULL == _cache_alloc(&c, n) OR
+	NULL == _malloc(&v,  n * sizeof(Type *)) OR
+	NULL == _malloc(&kh, n * sizeof(khpair_t))
+	)
 	{
 	    _cache_free(c);
 	    _free(v);
 	    return -1;
 	}
-
-    self->entries.cache  = c;
-    self->entries.values = v;
-    self->entries.kh     = kh;
-
-    self.capacity = n;
-    self.group_capacity = n / NGROUP;
-
-    return 0;
+    dict_set(dict, c, v, kh, n, 0, lf);
+    return n;
 }
 
 
+local void *dict_resize(QPyDictObject * UNUSED(dict), ssize_t UNUSED(new_size))
+{
+}
+
+local void *dict_copy(QPyDictObject *dict, ssize_t size)
+{
+    assert(NULL != dict);
+
+    if (0 == size)
+	size = dict->used_size;
+    if (dict_isempty(dict))
+	return NULL;
+    // TODO
+    return NULL;
+}
+
+local void *dict_clone(QPyDictObject *dict)
+{
+    assert(NULL != dict);
+
+    if (0 == size)
+	size = dict->capacity;
+    if (dict_isempty(dict))
+	return NULL;
+    // TODO
+    return NULL;
+}
+
+local void *dict_merge(QPyDictObject *dict, QPyDictObject *dict0)
+{
+    assert(NULL != dict && NULL != dict0);
+
+    if (0 == size)
+	size = dict->used_size;
+    if (dict_isempty(dict) AND dict_isempty(dict0))
+	return NULL;
+    if (dict == dict0)
+	return dict_copy(dict);
+    // TODO
+    return NULL;
+}
+
+local void dict_visit_all_do
+(
+    QPyDictObject *UNUSED(dict),
+    int (call_func *)(void *, uintmax_t, double) UNUSED();
+    )
+{
+    // TODO
+}
+
 local ssize_t lookup_insert_generic_nodeleted
 (
-	QPyDictObject  *self,
+	QPyDictObject  *dict,
 	Type *restrict key,
 	Type *restrict value
 )
 {
-	assert(NULL != self);
+	assert(NULL != dict);
 	assert(NULL != key);
 
-	const hash_t hash  = HASH(self, key);
+	const hash_t hash  = HASH(dict, key);
 
     if (hash < 0)
 	return -1;
 
-    const size_t group_idx = find_group_from_hash(hash, self->capacity);
+    const size_t group_idx = find_group_from_hash(hash, dict->capacity);
     const uint8_t  tag     = ctag(hash);
     const mm_t dup         = mm_duplicate(tag);
 
     size_t probe=0, cnt=0;
 
     do {
-	size_t i     = dict_slot(self, probe, group_idx);
-	mm_t   group = mm_load(self->entries.cache + i);
+	size_t i     = dict_slot(dict, probe, group_idx);
+	mm_t   group = mm_load(dict->entries.cache + i);
 	mask_t mask  = mm_test_equal(group, dup);
 
-	for (khpair_t it = self->entries.kh + i; mask;
+	for (khpair_t it = dict->entries.kh + i; mask;
 	     mask &= mask - 1)
 	    {
 		int j   = mm_scan_mask(mask);
@@ -338,14 +462,14 @@ local ssize_t lookup_insert_generic_nodeleted
 		if (UNLIKELY(cmp < 0))
 		    return -1;
 		if (cmp)
-		    return dict_update_key_in_entry(self,
+		    return dict_update_key_in_entry(dict,
 						    key,
 						    value,
 						    j);
 	    }
 	mask = mm_test_empty(group); // TODO
 	if (LIKELY(mask))
-	    return dict_add_entry(self,
+	    return dict_add_entry(dict,
 				  key,
 				  value,
 				  hash,
@@ -360,31 +484,31 @@ local ssize_t lookup_insert_generic_nodeleted
 
 locale_inline ssize_t lookup_insert_generic
 (
-	QPyDictObject *self,
+	QPyDictObject *dict,
 	Type *restrict key,
 	Type *restrict value
 )
 {
-	assert(NULL != self);
+	assert(NULL != dict);
 	assert(NULL != key);
 
-	const hash_t hash  = HASH(self, key);
+	const hash_t hash  = HASH(dict, key);
 
     if (hash < 0)
 	return -1;
 
-    const size_t group_idx = find_group_from_hash(hash, self->capacity);
+    const size_t group_idx = find_group_from_hash(hash, dict->capacity);
     const uint8_t  tag     = ctag(hash);
     const mm_t     dup     = mm_duplicate(tag);
 
     size_t probe=0, cnt=0; ssize_t k=-1;
 
     do {
-	size_t i     = dict_slot(self, probe, group_idx);
-	mm_t   group = mm_load(self->entries.cache + i);
+	size_t i     = dict_slot(dict, probe, group_idx);
+	mm_t   group = mm_load(dict->entries.cache + i);
 	mask_t mask  = mm_test_equal(group, dup);
 
-	for (khpair_t it = self->entries.kh + i; mask;
+	for (khpair_t it = dict->entries.kh + i; mask;
 	     mask &= mask - 1)
 	    {
 		int j   = mm_scan_mask(mask);
@@ -393,7 +517,7 @@ locale_inline ssize_t lookup_insert_generic
 		if (UNLIKELY(cmp < 0))
 		    return -1;
 		if (cmp)
-		    return dict_update_key_in_entry(self,
+		    return dict_update_key_in_entry(dict,
 						    key,
 						    value,
 						    j);
@@ -407,7 +531,7 @@ locale_inline ssize_t lookup_insert_generic
     } while (true);
 
     if (k != -1)
-	return dict_add_entry(self,
+	return dict_add_entry(dict,
 			      key,
 			      value,
 			      hash,
@@ -418,30 +542,30 @@ locale_inline ssize_t lookup_insert_generic
 
 locale_inline ssize_t lookup_generic
 (
-	QPyDictObject *self,
+	QPyDictObject *dict,
 	PyObject      *key
 )
 {
-	assert(NULL != self);
+	assert(NULL != dict);
 	assert(NULL != key);
 
-	const hash_t hash  = HASH(self, key);
+	const hash_t hash  = HASH(dict, key);
 
     if (hash < 0)
 	return -1;
 
-    const size_t group_idx = find_group_from_hash(hash, self->capacity);
+    const size_t group_idx = find_group_from_hash(hash, dict->capacity);
     const uint8_t  tag     = ctag(hash);
     const mm_t     dup     = mm_duplicate(tag);
 
     size_t probe=0, cnt=0;
 
     do {
-	size_t i     = dict_slot(self, probe, group_idx);
-	mm_t   group = mm_load(self->entries.cache + i);
+	size_t i     = dict_slot(dict, probe, group_idx);
+	mm_t   group = mm_load(dict->entries.cache + i);
 	mask_t mask  = mm_test_equal(group, dup);
 
-	for (khpair_t it = self->entries.kh + i; mask;
+	for (khpair_t it = dict->entries.kh + i; mask;
 	     mask &= mask - 1)
 	    {
 		int j   = mm_scan_mask(mask);

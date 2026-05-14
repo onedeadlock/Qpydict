@@ -9,7 +9,7 @@
 #endif
 
 #if defined(_WIN32) OR defined(_WIN64) OR defined(_MSC_VER)
-#    include <windows.h>
+#    include <intrin.h>
 #endif
 
 #if defined(__clang__) OR defined(__GNUC__) OR defined(__MINGW32__) OR defined(__MINGW64__)
@@ -26,7 +26,7 @@
 #ifndef __has_attribute
 #    define __has_attribute(x) 0 
 #endif
-#define has_builtin(x)   (__has_builtin(x) OR HAVE_GCC_COMPILER)
+#define has_builtin(x)   (__has_builtin(x)   OR HAVE_GCC_COMPILER)
 #define has_attribute(x) (__has_attribute(x) OR HAVE_GCC_COMPILER)
 
 #if has_builtin(__builtin_expect)
@@ -67,6 +67,8 @@ static inline __forceinline uint64_t BSF(const uint64_t v)
 
 #if has_builtin(__builtin_unreachable)
 #    define UNREACHABLE() __builtin_unreachable()
+#elif HAVE_MSVC_COMPILER
+#    define UNREACHABLE() __assume(0)
 #else
 #    define UNREACHABLE()
 #endif
@@ -130,6 +132,20 @@ static inline __forceinline uint64_t BSF(const uint64_t v)
 #else
 #    define HASH(self, key) PyObject_Hash(key)
 #    define CMP(self, t, u) 0
+#endif
+
+// lower threshold of entries that can processed at a time
+#define NGROUP_MAX 8
+// upper threshold of entries that can processed at a time
+#define NGROUP_MAX 32
+
+// meta-tags used to define the state of an entry as used, deleted or empty 
+#if CACHE_TAG_NOZERO
+#    define EMPTY_ENTRY   0xff
+#    define DELETED_ENTRY 0x80
+#else
+#    define EMPTY_ENTRY   0x00
+#    define DELETED_ENTRY 0x80
 #endif
 
 #undef has_builtin
