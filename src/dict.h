@@ -12,7 +12,10 @@
 #define PTR(ptr)   (void *)(ptr)
 #define DPTR(dptr) (*(void **)(dptr))
 #define SHPTR(ptr) (uint16_t *)PTR(ptr)
-#define DCR(x)     --(x)
+#define LONG(x)    (long)(x)
+
+#define DCR(x) --(x)
+#define PLUSNGROUP(x)     ((x) + NGROUP)
 #define get_NEXT_GROUP(x) ((x) += NGROUP)
 
 #define out_of_range_lf(lf) ((lf) < .3 OR(lf) > 1.)
@@ -30,31 +33,31 @@ local_inline int PURE(ctag)(const uint64_t v)
 #define ctag(v) ((v) & 0xff)
 #endif
 
-local_inline size_t PURE(find_group_from_hash)(
-    const hash_t hash,
-    const size_t size)
+local_inline size_t
+PURE(find_group_from_hash)(const hash_t hash,
+                           const size_t size)
 {
     return ALIGN(hash & (size - 1), NGROUP) / NGROUP;
 }
 
-warn_unused local void *caligned_malloc(
-    void *memdptr,
-    const uint16_t align_size,
-    const size_t size)
+warn_unused local void *
+caligned_malloc(void *memdptr,
+                const uint16_t align_size,
+                const size_t   size)
 {
     const uint16_t align_offset_size = sizeof(uint16_t);
     const uint16_t align_fault       = align_size - 1;
     const uint16_t max_offset_size   = align_offset_size + align_fault;
 
     if (size > (SIZE_MAX - max_offset_size))
-	{
-	    // alignment would cause overflow
-	    return NULL;
-	}
+    {
+        // alignment would cause overflow
+        return NULL;
+    }
 
     void *ptr = malloc(size + max_offset_size);
     if (NULL == ptr)
-	return ptr;
+        return ptr;
 
     // align memory
     void *kptr = ALIGNU((uintptr_t)ptr + max_offset_size, align_size);
@@ -69,38 +72,39 @@ warn_unused local void *caligned_malloc(
 local void caligned_free(void *memptr)
 {
     if (memptr == NULL)
-	return;
+        return;
 
     const uint16_t align_size = ((uint16_t *)memptr)[-1];
-    const void *memstart      = (uintptr_t)memptr - align_size;
+    const void *   memstart   = (uintptr_t)memptr - align_size;
 
     return free(memstart);
 }
 
-warn_unused local_inline void *aligned_malloc_set(
-    const size_t size,
-    const uint16_t align_size,
-    const int fchar)
+warn_unused local_inline void *
+aligned_malloc_set(const size_t size,
+                   const uint16_t align_size,
+                   const int fchar)
 {
     void *ptr = NULL;
 
     if (caligned_malloc(&ptr, align_size, size))
-	return memset(ptr, fchar, size);
+        return memset(ptr, fchar, size);
     return p;
 }
 
-local_inline void *aligned_calloc(
-    const size_t size,
-    const uint16_t align_size)
+local_inline void *
+aligned_calloc(const size_t size,
+               const uint16_t align_size)
 {
     void *ptr = NULL;
 
     if (caligned_malloc(&ptr, align_size, size))
-	return memset(ptr, 0, size);
+        return memset(ptr, 0, size);
     return ptr;
 }
 
-warn_unused local_inline void *_cache_alloc(void *dptr, size_t size)
+warn_unused local_inline void *
+_cache_alloc(void *dptr, size_t size)
 {
     void *ptr = NULL;
 
@@ -111,7 +115,7 @@ warn_unused local_inline void *_cache_alloc(void *dptr, size_t size)
 #else
     ptr = aligned_calloc(size, NGROUP);
 #endif
-
+    
     DDPTR(dptr) = ptr;
     return ptr;
 }
@@ -121,7 +125,8 @@ local_inline void _cache_free(void *ptr)
     return caligned_free(ptr);
 }
 
-warn_unused local_inline void *_malloc(void *dptr, size_t size)
+warn_unused local_inline void *
+_malloc(void *dptr, size_t size)
 {
     void *ptr = NULL;
 
@@ -148,11 +153,11 @@ local_inline size_t next_power_of_two(size_t n)
 
     return (
 #if (SIZE_MAX > 0xffffffffU)
-	1ULL << (64 - BSF(n))
+            1ULL << (64 - BSF(n))
 #else
-	1U << (32 - BSF(n))
+            1U << (32 - BSF(n))
 #endif
-	);
+           );
 }
 
 local_inline size_t prev_power_of_two(size_t n)
@@ -161,53 +166,52 @@ local_inline size_t prev_power_of_two(size_t n)
 
     return (
 #if (SIZE_MAX > 0xffffffffU)
-	1ULL << (63 - BSF(n))
+            1ULL << (63 - BSF(n))
 #else
-	1U << (31 - BSF(n))
+            1U << (31 - BSF(n))
 #endif
-	);
+           );
 }
 
-local_inline size_t get_size_no_resize_trigger(
-    const size_t size,
-    const float  lf)
+local_inline size_t
+get_size_no_resize_trigger(const size_t size,
+                           const float  lf)
 {
     return next_power_of_two(size / lf);
 }
 
-local_inline size_t try_size_requirement(
-    const size_t size,
-    const size_t max_object_size,
-    const float  lf)
+local_inline size_t
+try_size_requirement(const size_t size,
+                     const size_t max_object_size,
+                     const float  lf)
 {
     assert(size != 0);
 
     size_t try_size = get_size_no_resize_trigger(size, lf);
 
     if (check_if_safe_mul(try_size, max_object_size, (size_t)0))
-	{
-	    // try_size would overflow
+    {
+        // try_size would overflow
 #if USE_EXACT_SIZE
-	    return 0;
+        return 0;
 #else
-	    return size; // object will trigger an early resize
+        return new_power_of_two(size); // object may trigger an early resize
 #endif
-	}
-
+    }
     return try_size;
 }
 
-local_inline int key_generic_compare(
-    const khpair_t it,
-    const Type    *key,
-    const hash_t   hash)
+local_inline int
+key_generic_compare(const khpair_t it,
+                    const Type    *key,
+                    const hash_t   hash)
 {
     int cmp;
 
     if (it->hash != hash)
-	return 0;
+        return 0;
     if (it->key == key)
-	return 1;
+        return 1;
 
     Py_INCREF(it->key);
     cmp = PyObject_RichCompareBool(it->key, key, Py_EQ);
@@ -217,11 +221,10 @@ local_inline int key_generic_compare(
 }
 
 locale_inline int
-dict_update_key_in_entry(
-    QPyDictObject *dict,
-    Type *restrict key,
-    Type *restrict value,
-    ssize_t j)
+dict_update_key_in_entry(QPyDictObject *dict,
+                         Type *restrict key,
+                         Type *restrict value,
+                         ssize_t j)
 {
     Type *tmp = dict->entries.values[j];
 
@@ -232,13 +235,13 @@ dict_update_key_in_entry(
     return 0;
 }
 
-locale_inline size_t dict_add_entry(
-    QPyDictObject *dict,
-    Type *restrict key,
-    Type *restrict value,
-    hash_t  hash,
-    ssize_t tag,
-    ssize_t j)
+locale_inline size_t
+dict_add_entry(QPyDictObject *dict,
+               Type *restrict key,
+               Type *restrict value,
+               hash_t  hash,
+               ssize_t tag,
+               ssize_t j)
 {
     entry_t entries = dict->entries;
 
@@ -255,14 +258,14 @@ locale_inline size_t dict_add_entry(
     return 0;
 }
 
-local_inline void dict_set(
-    QPyDictObject *dict,
-    void *restrict che,
-    void *restrict val,
-    void *restrict kh,
-    ssize_t cap,
-    ssize_t size,
-    float lf)
+local_inline void
+dict_set(QPyDictObject *dict,
+         void *restrict che,
+         void *restrict val,
+         void *restrict kh,
+         ssize_t cap,
+         ssize_t size,
+         float lf)
 {
     assert(NULL != dict);
     assert(0 == dict->capacity);
@@ -271,8 +274,16 @@ local_inline void dict_set(
     dict->entries.values = val;
     dict->entries.kh     = kh;
 
-    dict->group_capacity = cap / NGROUP;
+    dict_set_new_capacity(cap, size, lf);
+}
+local_inline void
+dict_set_new_capacity(QPyDictObject *dict,
+             ssize_t cap,
+             ssize_t size,
+             float   lf)
+{
     dict->capacity       = cap;
+    dict->group_capacity = ALIGN(cap / NGROUP);
     dict->max_size       = (lf * cap) + 0.5;
     dict->used_size      = size;
 }
@@ -316,64 +327,195 @@ local_inline int dict_isunused(QPyDictObject *dict)
     return dict->capacity == 0;
 }
 
-local_inline int dict_explicit_set_load_factor(QPyDictObject *dict, float lf)
+local_inline int
+dict_explicit_set_load_factor(QPyDictObject *dict, float lf)
 {
     assert(NULL != dict);
 
     if (out_of_range_lf(lf))
-	return -1;
+        return -1;
 
-    /** if old_lf is greater than new_lf and size does not
-	meet the new_lf criteria, a rehash must occur on
-	the next call to a dict mutating function. */
+    dict->lf = lf;
+
+    /* if old_lf is greater than new_lf and size does not
+        meet the new_lf criteria, a rehash must occur on
+        the next call to a dict mutating function. */
     dict->max_size = dict->capacity * lf;
     return 0;
 }
 
 local int
-dict_alloc_internal(
-    QPyDictObject *dict,
-    const ssize_t size,
-    const float   lf)
+dict_alloc_internal(QPyDictObject *dict,
+                    const ssize_t size,
+                    const float   lf)
 {
     assert(NULL != dict);
 
     if (size < 0 OR out_of_range_lf(lf))
-	return -1;
+        return -1;
     if (0 == size)
-	{
-	    dict_unset(dict);
-	    return 0;
-	}
+    {
+        dict_unset(dict);
+        return 0;
+    }
 
     const size_t n = try_size_requirement(size, sizeof(khpair_t), lf);
     if (0 == n)
-	return -1;
+        return -1;
 
     void *kh, *v, *c;
 
-    if (NULL == _cache_alloc(&c, n) OR NULL == _malloc(&v, n * sizeof(Type *)) OR NULL == _malloc(&kh, n * sizeof(khpair_t)))
-	{
-	    _cache_free(c);
-	    _free(v);
-	    return -1;
-	}
+    if (NULL == _cache_alloc(&c, PLUSNGROUP(n))) OR NULL == _malloc(&v, n * sizeof(Type *)) OR NULL == _malloc(&kh, n * sizeof(khpair_t)))
+    {
+        _cache_free(c);
+        _free(v);
+        return -1;
+    }
     dict_set(dict, c, v, kh, n, 0, lf);
     return n;
 }
 
-local void *dict_resize(QPyDictObject *UNUSED(dict), ssize_t UNUSED(new_size))
+local_inline visit_t new_visit_struct(QPyDictObject *dict)
+{
+    assert(NULL != dict);
+
+    visit_t v = {
+        .group = dict->entries.cache,
+        .size  = dict->group_capacity,
+        .mask  = 0
+    };
+
+    return v;
+}
+
+local_inline visit_t new_visit_struct_from(QPyDictObject *dict, ssize_t i)
+{
+    assert(NULL != dict);
+    assert(i < dict->capacity);
+
+    visit_t v = {
+        .group = dict->entries.cache + i,
+        .size  = ALIGN(i, NGROUP),
+        .mask  = 0
+    };
+
+    return v;
+}
+
+local_inline int visit_next_nonempty_group(visit_t *v)
+{
+    assert(NULL != v);
+    group = v->group;
+    if (NULL == group)
+        return 0;
+    assert(v->size < 1);
+
+    while (true)
+    {
+        v->mask = mm_test_hasentry(mm_load(v->group));
+        if (LIKELY(v->mask))
+            return 1;
+        if (DCR(v->size) == 0)
+            return (v->group = NULL) != NULL;
+
+        get_NEXT_GROUP(v->group);
+
+        // unrolled
+        v->mask = mm_test_hasentry(mm_load(v->group));
+        if (LIKELY(v->mask))
+            return 1;
+        if (DCR(v->size) == 0)
+            return (v->group = NULL) != NULL;
+
+        get_NEXT_GROUP(v->group);
+    }
+    UNREACHABLE();
+}
+
+local warn_unused int
+dict_visit_all_do(QPyDictObject *dict,
+                  const void    *arg,
+                  int  (do_func *)(const ckhpair_t *kh,
+                                   const Type *val,
+                                   void *arg))
+{
+    assert(NULL != dict);
+
+    visit_t v   = new_visit_struct(dict);
+    ssize_t ret = 1, i = 0, j = 0;
+
+    // TODO:  mark CRITICAL SECTION
+    while (visit_next_nonempty_group(&v))
+    {
+        while (LIKELY(mask AND ret))
+        {
+            j = i * NGROUP + mm_scan_mask(mask);
+
+            ckhpair_t *pkh = dict->entries.kh + j;
+            Type      *val = dict->entries.values[j];
+
+            mask &= mask - 1;
+            ret   = do_func(pkh, val, arg);
+        }
+        i++;
+    }
+    return -!ret;
+}
+
+local_inline ssize_t
+dict_count_only_from(QPyDictObject *dict, ssize_t i)
+{
+    visit_t v = new_visit_struct_from(dict, i);
+    ssize_t j = 0;
+    
+    while (visit_next_nonempty_group(&v))
+        j += POPCNT(v->mask);
+    return j;
+}
+
+local int
+dict_resize(QPyDictObject *dict, ssize_t new_size)
+{
+    assert(NULL != dict);
+    asseet(! (new_size < 0));
+
+    if (0 == new_size)
+        return dict_remove(dict);
+
+    ssize_t size = next_power_of_two(new_size, NGROUP);
+
+    // TODO: if new_size 
+    if (dict->capacity < new_size)
+    {
+        LOG(stderr, "resize of `dict(%lu) at address %p` to `dict(%lu)` will result to loss of entries", LONG(dict->capacity), dict, LONG(new_size));
+
+#    if FORCE_ALLOC_RESIZE
+        // TODO
+#    endif
+
+        ssize_t used_size = dict->used_size - dict_count_only_from(dict, size);
+
+        dict_set_capacity(dict, new_size, used_size, dict->lf);
+        return 0;
+    }
+    // TODO
+    return 0;
+}
+
+local void *
+dict_remove(QPyDictObject *dict)
 {
 }
 
-local void *dict_copy(QPyDictObject *dict, ssize_t size)
+local void *
+dict_copy(QPyDictObject *dict, ssize_t size)
 {
     assert(NULL != dict);
 
     if (0 == size)
-	size = dict->used_size;
+        size = dict->used_size;
     if (dict_isempty(dict))
-	return NULL;
+        return NULL;
     // TODO
     return NULL;
 }
@@ -383,9 +525,9 @@ local void *dict_clone(QPyDictObject *dict)
     assert(NULL != dict);
 
     if (0 == size)
-	size = dict->capacity;
+        size = dict->capacity;
     if (dict_isempty(dict))
-	return NULL;
+        return NULL;
     // TODO
     return NULL;
 }
@@ -395,76 +537,33 @@ local void *dict_merge(QPyDictObject *dict, QPyDictObject *dict0)
     assert(NULL != dict && NULL != dict0);
 
     if (0 == size)
-	size = dict->used_size;
+        size = dict->used_size;
     if (dict_isempty(dict) AND dict_isempty(dict0))
-	return NULL;
+        return NULL;
     if (dict == dict0)
-	return dict_copy(dict);
+        return dict_copy(dict);
+    // TODO:
+    return NULL;
+}
+
+local void *dict_merge_nocopy(QPyDictObject *dict, QPyDictObject *dict0)
+{
+    assert(NULL != dict && NULL != dict0);
+
+    if (0 == size)
+        size = dict->used_size;
+    if (dict_isempty(dict) AND dict_isempty(dict0))
+        return NULL;
+    if (dict == dict0)
+        return dict;
     // TODO
     return NULL;
 }
 
-local_inline visit_t new_visit_struct(QPyDictObject *dict)
-{
-    visit_t v = {
-	.group = dict->entries.cache,
-	.size  = dict->group_capacity,
-	.mask  = 0
-    };
-
-    return v;
-}
-local_inline int visit_next_nonempty_group(visit_t *v)
-{
-    assert(NULL != v);
-    group = v->group;
-    if (NULL == group)
-	return 0;
-    assert(v->size < 1);
-
-    while (true)
-	{
-	    v->mask = mm_test_hasentry(mm_load(v->group)); // TODO
-	    if (LIKELY(v->mask))
-		return 1;
-	    if (DCR(v->size) == 0)
-		return (v->group = NULL) != NULL;
-
-	    get_NEXT_GROUP(v->group);
-	}
-    UNREACHABLE();
-}
-
-local warn_unused int dict_visit_all_do(
-    QPyDictObject *dict,
-    const void    *arg,
-    int  (do_func *)(const khpair_t kh, const Type *val, void *arg))
-{
-    assert(NULL != dict);
-
-    visit_t v   = new_visit_struct(dict);
-    ssize_t ret = 1, i = 0, j = 0;
-
-    // TODO:  mark CRITICAL SECTION
-    while (visit_next_nonempty_group(&v))
-	{
-	    while (LIKELY(mask AND ret))
-		{
-		    j = i * NGROUP + mm_scan_mask(mask);
-		    ret = do_func(dict->entries.kh[j],
-				  dict->entries.values[j],
-				  arg);
-		    mask &= mask - 1;
-		}
-	    i++;
-	}
-    return -!ret;
-}
-
-local ssize_t lookup_insert_generic_nodeleted(
-    QPyDictObject *dict,
-    Type *restrict key,
-    Type *restrict value)
+local ssize_t
+lookup_insert_generic_nodeleted(QPyDictObject *dict,
+                                Type *restrict key,
+                                Type *restrict value)
 {
     assert(NULL != dict);
     assert(NULL != key);
@@ -472,52 +571,52 @@ local ssize_t lookup_insert_generic_nodeleted(
     const hash_t hash = HASH(dict, key);
 
     if (hash < 0)
-	return -1;
+        return -1;
 
-    const size_t group_idx = find_group_from_hash(hash, dict->capacity);
+    const size_t  group_idx = find_group_from_hash(hash, dict->capacity);
     const uint8_t tag = ctag(hash);
-    const mm_t dup = mm_duplicate(tag);
+    const mm_t    dup = mm_duplicate(tag);
 
     size_t probe = 0, cnt = 0;
 
     do {
-	size_t i = dict_slot(dict, probe, group_idx);
-	mm_t group = mm_load(dict->entries.cache + i);
-	mask_t mask = mm_test_equal(group, dup);
+        size_t i     = dict_slot(dict, probe, group_idx);
+        mm_t   group = mm_load(dict->entries.cache + i);
+        mask_t mask  = mm_test_equal(group, dup);
 
-	for (khpair_t it = dict->entries.kh + i; mask;
-	     mask &= mask - 1)
-	    {
-		int j = mm_scan_mask(mask);
-		int cmp = key_generic_compare(it + j, key, hash);
+        for (khpair_t it = dict->entries.kh + i; mask;
+             mask &= mask - 1)
+        {
+            int j   = mm_scan_mask(mask);
+            int cmp = key_generic_compare(it + j, key, hash);
 
-		if (UNLIKELY(cmp < 0))
-		    return -1;
-		if (cmp)
-		    return dict_update_key_in_entry(dict,
-						    key,
-						    value,
-						    j);
-	    }
-	mask = mm_test_empty(group); // TODO
-	if (LIKELY(mask))
-	    return dict_add_entry(dict,
-				  key,
-				  value,
-				  hash,
-				  tag,
-				  mm_scan_mask(mask));
+            if (UNLIKELY(cmp < 0))
+                return -1;
+            if (cmp)
+                return dict_update_key_in_entry(dict,
+                                                key,
+                                                value,
+                                                j);
+        }
+        mask = mm_test_empty(group); // TODO
+        if (LIKELY(mask))
+            return dict_add_entry(dict,
+                                  key,
+                                  value,
+                                  hash,
+                                  tag,
+                                  mm_scan_mask(mask));
 
-	probe_next_dict_slot(probe, cnt);
+        probe_next_dict_slot(probe, cnt);
     } while (true);
 
     UNREACHABLE();
 }
 
-locale_inline ssize_t lookup_insert_generic(
-    QPyDictObject *dict,
-    Type *restrict key,
-    Type *restrict value)
+locale_inline ssize_t
+lookup_insert_generic(QPyDictObject *dict,
+                      Type *restrict key,
+                      Type *restrict value)
 {
     assert(NULL != dict);
     assert(NULL != key);
@@ -525,7 +624,7 @@ locale_inline ssize_t lookup_insert_generic(
     const hash_t hash = HASH(dict, key);
 
     if (hash < 0)
-	return -1;
+        return -1;
 
     const size_t group_idx = find_group_from_hash(hash, dict->capacity);
     const uint8_t tag      = ctag(hash);
@@ -535,44 +634,38 @@ locale_inline ssize_t lookup_insert_generic(
     ssize_t k = -1;
 
     do {
-	size_t i    = dict_slot(dict, probe, group_idx);
-	mm_t group  = mm_load(dict->entries.cache + i);
-	mask_t mask = mm_test_equal(group, dup);
+        size_t i     = dict_slot(dict, probe, group_idx);
+        mm_t   group = mm_load(dict->entries.cache + i);
+        mask_t mask  = mm_test_equal(group, dup);
 
-	for (khpair_t it = dict->entries.kh + i; mask; mask &= mask - 1)
-	    {
-		int j   = mm_scan_mask(mask);
-		int cmp = key_generic_compare(it + j, key, hash);
+        for (khpair_t it = dict->entries.kh + i; mask; mask &= mask - 1)
+        {
+            int j   = mm_scan_mask(mask);
+            int cmp = key_generic_compare(it + j, key, hash);
 
-		if (UNLIKELY(cmp < 0))
-		    return -1;
-		if (cmp)
-		    return dict_update_key_in_entry(dict,
-						    key,
-						    value,
-						    j);
-	    }
-	if (k < 0)
-	    k = mm_find_empty_slot(group); // TODO
+            if (UNLIKELY(cmp < 0))
+                return -1;
+            if (cmp)
+                return dict_update_key_in_entry(dict,
+                                                key,
+                                                value,
+                                                j);
+        }
+        if (k < 0)
+            k = mm_find_empty_slot(group); // TODO
 
-	if (LIKELY(mm_test_empty_fast(group)))
-	    break; // TODO
-	probe_next_dict_slot(probe, cnt);
+        if (LIKELY(mm_test_empty_fast(group)))
+            break; // TODO
+        probe_next_dict_slot(probe, cnt);
     } while (true);
 
     if (k != -1)
-	return dict_add_entry(dict,
-			      key,
-			      value,
-			      hash,
-			      tag,
-			      k);
+        return dict_add_entry(dict, key, value, hash, tag,k);
     UNREACHABLE();
 }
 
-locale_inline ssize_t lookup_generic(
-    QPyDictObject *dict,
-    PyObject *key)
+locale_inline ssize_t
+lookup_generic(QPyDictObject *dict, PyObject *key)
 {
     assert(NULL != dict);
     assert(NULL != key);
@@ -580,33 +673,33 @@ locale_inline ssize_t lookup_generic(
     const hash_t hash = HASH(dict, key);
 
     if (hash < 0)
-	return -1;
+        return -1;
 
-    const size_t group_idx = find_group_from_hash(hash, dict->capacity);
-    const uint8_t tag      = ctag(hash);
-    const mm_t dup         = mm_duplicate(tag);
+    const size_t  group_idx = find_group_from_hash(hash, dict->capacity);
+    const uint8_t tag       = ctag(hash);
+    const mm_t    dup       = mm_duplicate(tag);
 
     size_t probe = 0, cnt = 0;
 
     do {
-	size_t i    = dict_slot(dict, probe, group_idx);
-	mm_t group  = mm_load(dict->entries.cache + i);
-	mask_t mask = mm_test_equal(group, dup);
+        size_t i     = dict_slot(dict, probe, group_idx);
+        mm_t   group = mm_load(dict->entries.cache + i);
+        mask_t mask  = mm_test_equal(group, dup);
 
-	for (khpair_t it = dict->entries.kh + i; mask;
-	     mask &= mask - 1)
-	    {
-		int j   = mm_scan_mask(mask);
-		int cmp = key_generic_compare(it + j, key, hash);
+        for (khpair_t it = dict->entries.kh + i; mask;
+             mask &= mask - 1)
+        {
+            int j   = mm_scan_mask(mask);
+            int cmp = key_generic_compare(it + j, key, hash);
 
-		if (UNLIKELY(cmp < 0))
-		    return -1;
-		if (cmp)
-		    return 0;
-	    }
-	if (LIKELY(mm_test_empty_fast(group)))
-	    break;
-	probe_next_dict_slot(probe, cnt);
+            if (UNLIKELY(cmp < 0))
+                return -1;
+            if (cmp)
+                return 0;
+        }
+        if (LIKELY(mm_test_empty_fast(group)))
+            break;
+        probe_next_dict_slot(probe, cnt);
     } while (true);
 
     UNREACHABLE();

@@ -37,32 +37,34 @@
 #    define LIKELY(x)   (x)
 #endif
 
-#if has_builtin(__builtin_ctz)
-#    define BSR(x) __builtin_ctzll(x)
-#elif HAVE_INTEL_COMPILER && defined(_bit_scan_reverse)
-#    define BSR(x) _bit_scan_reverse(x)
-#elif HAVE_MSVC_COMPILER
-static inline __forceinline uint64_t BSR(const uint64_t v)
-{
-    uint64_t idx;
-    return (_BitScanReverse64(&idx, v), idx);
-}
-#else
-#    define BSR(x) // TODO
-#endif
-
-#if has_builtin(__builtin_clz)
-#    define BSF(x) __builtin_clzll(x)
-#elif HAVE_INTEL_COMPILER && defined(_bit_scan_forward)
-#    define BSF(x) _bit_scan_forward(x)
-#elif HAVE_MSVC_COMPILER
+#if has_builtin(__builtin_clzll)
+#    define BSF(x)    __builtin_clzll(x)
+#    define BSR(x)    __builtin_ctzll(x)
+#    define POPCNT(x) __builtin_popcntll(x)
+#elif HAVE_INTEL_COMPILER OR HAVE_MSVC_COMPILER
+#    if defined(_bit_scan_forward)
+#        define BSF(x) _bit_scan_forward(x)
+#    else
 static inline __forceinline uint64_t BSF(const uint64_t v)
 {
     uint64_t idx;
     return (_BitScanForward64(&idx, v), idx);
 }
+#    endif
+#    if defined(_bit_scan_forward)
+#        define BSF(x) _bit_scan_forward(x)
+#    else
+static inline __forceinline uint64_t BSR(const uint64_t v)
+{
+    uint64_t idx;
+    return (_BitScanReverse64(&idx, v), idx);
+}
+#    endif
 #else
-#    define BSF(x) // TODO
+#     // TODO
+#    define BSF(x)
+#    define BSR(x) 
+#    define POPCNT(x) 
 #endif
 
 #if has_builtin(__builtin_unreachable)
@@ -146,6 +148,16 @@ static inline __forceinline uint64_t BSF(const uint64_t v)
 #else
 #    define EMPTY_ENTRY   0x00
 #    define DELETED_ENTRY 0x80
+#endif
+
+// logging
+#ifndef NDEBUG
+#    if NO_PyAPI
+#        define LOG(file, fmt, ...)  fprintf(f, fmt, __VA_ARGS__)
+#    else
+#        define LOG(...) // TODO
+#else
+#    define LOG(...)
 #endif
 
 #undef has_builtin
