@@ -80,9 +80,9 @@ static inline __forceinline uint64_t BSR(const uint64_t v)
 #    define ALIGNED_LOAD 1
 #endif
 
-// Round up/down to a multiple of 2^d
-#define ALIGN(v, d)    ((v) - ((v) & (d)))
-#define ALIGNU(v, d)   (((n) + (d) - 1) & ~((d) - 1))
+// align to a multiple of d, where d is a power of 2. v is unchange if d already satisfies the alignment
+#define ALIGN(v, d)  ((v)  - ((v) & (d) - 1)) // down
+#define ALIGNU(v, d) (((n) + (d) - 1) & ~((d) - 1)) // up
 
 // set value
 #define SETVAL(lv, rv) ((lv) = (rv))

@@ -17,6 +17,7 @@
 #define DCR(x) --(x)
 #define PLUSNGROUP(x)     ((x) + NGROUP)
 #define get_NEXT_GROUP(x) ((x) += NGROUP)
+#define LASTGRP(x) (ALIGNU(x/NGROUP, NGROUP) - NGROUP)
 
 #define out_of_range_lf(lf) ((lf) < .3 OR(lf) > 1.)
 #define inc_entry_size(d) ++((d)->used_size)
@@ -45,13 +46,13 @@ caligned_malloc(void *memdptr,
                 const uint16_t align_size,
                 const size_t   size)
 {
-    const uint16_t align_offset_size = sizeof(uint16_t);
-    const uint16_t align_fault       = align_size - 1;
-    const uint16_t max_offset_size   = align_offset_size + align_fault;
+    assert(align_size & (align_size - 1)); // ensure align_size is a power of 2 (just a rule; multiples still works)
+
+        const uint16_t max_offset = sizeof(uint16_t) + (align_size - 1);
 
     if (size > (SIZE_MAX - max_offset_size))
     {
-        // alignment would cause overflow
+        // `size + alignment` would cause an overflow
         return NULL;
     }
 
@@ -59,11 +60,9 @@ caligned_malloc(void *memdptr,
     if (NULL == ptr)
         return ptr;
 
-    // align memory
-    void *kptr = ALIGNU((uintptr_t)ptr + max_offset_size, align_size);
+    void *kptr = ALIGNU((uintptr_t)ptr + sizeof(uint16_t), align_size);
 
-    // save align size (used for further memory op)
-    ((uint16_t *)kptr)[-1] = (uintptr_t)kptr - (uintptr_t)ptr;
+    ((uint16_t *)kptr)[-1] = (uintptr_t)kptr - (uintptr_t)ptr; // store offset size just before the aligned memory
 
     DDPTR(memdptr) = kptr;
     return kptr;
@@ -74,27 +73,15 @@ local void caligned_free(void *memptr)
     if (memptr == NULL)
         return;
 
-    const uint16_t align_size = ((uint16_t *)memptr)[-1];
-    const void *   memstart   = (uintptr_t)memptr - align_size;
+    const uint16_t offset   = ((uint16_t *)memptr)[-1];
+    const void *   memstart = (uintptr_t)memptr - offset;
 
     return free(memstart);
 }
 
-warn_unused local_inline void *
-aligned_malloc_set(const size_t size,
-                   const uint16_t align_size,
-                   const int fchar)
-{
-    void *ptr = NULL;
-
-    if (caligned_malloc(&ptr, align_size, size))
-        return memset(ptr, fchar, size);
-    return p;
-}
-
 local_inline void *
-aligned_calloc(const size_t size,
-               const uint16_t align_size)
+caligned_calloc(const size_t size,
+                const uint16_t align_size)
 {
     void *ptr = NULL;
 
@@ -104,23 +91,59 @@ aligned_calloc(const size_t size,
 }
 
 warn_unused local_inline void *
-_cache_alloc(void *dptr, size_t size)
+caligned_malloc_set(const size_t size,
+                    const uint16_t align_size,
+                    const int fchar)
+{
+    void *ptr = NULL;
+
+    if (caligned_malloc(&ptr, align_size, size))
+        return memset(ptr, fchar, size);
+    return p;
+}
+
+local void *caligned_realloc(void *memdptr, uint16_t align_size, size_t n)
+{
+    assert(NULL != dptr);
+    if (DDPTR(dptr) == NULL)
+        return NULL;
+
+    const uint16_t offset   = ((uint16_t *)memdptr)[-1];
+    const void *   memstart = (uintptr_t)memdptr - offset;
+
+    void *ptr = NULL;
+
+    if (NULL == caligned_malloc(&ptr, align_size, n))
+        return ptr;
+
+    DDPTR(memdptr) = memcpy(ptr, DDPTR(memdptr), n);
+    cache_free(memstart);
+    return ptr;
+}
+
+warn_unused local_inline void *
+cache_malloc(void *dptr, size_t size)
 {
     void *ptr = NULL;
 
     assert(size != 0);
 
-#ifndef CACHE_TAG_NOZERO
-    ptr = aligned_malloc_set(size, NGROUP, QPy_EMPTY);
-#else
-    ptr = aligned_calloc(size, NGROUP);
-#endif
+    ptr = aligned_malloc_set(size, NGROUP, EMPTY);
     
     DDPTR(dptr) = ptr;
     return ptr;
 }
 
-local_inline void _cache_free(void *ptr)
+local_inline void *cache_realloc(void *dptr, ssize_t n)
+{
+    void *ptr = NULL;
+
+    if (caligned_realloc(&ptr, NGROUP, size))
+        return memset(ptr+LASTGRP(n), 0, size);
+    return ptr;
+}
+
+local_inline void cache_free(void *ptr)
 {
     return caligned_free(ptr);
 }
@@ -140,6 +163,12 @@ _malloc(void *dptr, size_t size)
 
     DDPTR(dptr) = ptr;
     return ptr;
+}
+
+warn_unused local_inline void *
+_realloc(void *dptr, size_t size)
+{
+    return realloc(DDPTR(dptr), NGROUP, size);
 }
 
 local_inline void _free(void *ptr)
@@ -345,9 +374,9 @@ dict_explicit_set_load_factor(QPyDictObject *dict, float lf)
 }
 
 local int
-dict_alloc_internal(QPyDictObject *dict,
-                    const ssize_t size,
-                    const float   lf)
+dict_acquire_memory(QPyDictObject *dict,
+                  const ssize_t size,
+                  const float   lf)
 {
     assert(NULL != dict);
 
@@ -417,7 +446,6 @@ local_inline int visit_next_nonempty_group(visit_t *v)
             return 1;
         if (DCR(v->size) == 0)
             return (v->group = NULL) != NULL;
-
         get_NEXT_GROUP(v->group);
 
         // unrolled
@@ -426,7 +454,6 @@ local_inline int visit_next_nonempty_group(visit_t *v)
             return 1;
         if (DCR(v->size) == 0)
             return (v->group = NULL) != NULL;
-
         get_NEXT_GROUP(v->group);
     }
     UNREACHABLE();
@@ -474,28 +501,53 @@ dict_count_only_from(QPyDictObject *dict, ssize_t i)
 }
 
 local int
-dict_resize(QPyDictObject *dict, ssize_t new_size)
+dict_resize_memory(QPyDictObject *dict, ssize_t n)
+{
+    cache_t cache = dict->cache;
+
+    // temporarily restrict any access to dict; any non-size call to dict methods return None (or nullptr)
+    dict->cache = empty_tag_full_group;
+
+    if (cache_realloc(&cache, n) AND _realloc(&(dict->kh), n) AND _realloc(&(dict->values), n))
+    {
+#    ifndef NDEBUG
+        const ssize_t cp = dict->capacity;
+        if (n > cp)
+            memset(dict->kh.keys + cp, EMPTY, n - cp),
+#    endif
+        dict->cache = cache; // restore
+        return 0;
+    }
+    LOG(stderr, "attempt to resize dict at address `%p` failed", dict);
+    dict->cache = cache; // restore
+
+    return -1;
+}
+
+local int
+dict_resize(QPyDictObject *dict, ssize_t n)
 {
     assert(NULL != dict);
-    asseet(! (new_size < 0));
+    asseet(n >= 0);
 
-    if (0 == new_size)
+    if (NOT n)
         return dict_remove(dict);
 
-    ssize_t size = next_power_of_two(new_size, NGROUP);
+    const size_t nsize = next_power_of_two(n, NGROUP);
 
     // TODO: if new_size 
-    if (dict->capacity < new_size)
+    if (dict->capacity < nsize)
     {
-        LOG(stderr, "resize of `dict(%lu) at address %p` to `dict(%lu)` will result to loss of entries", LONG(dict->capacity), dict, LONG(new_size));
+        LOG(stderr, "resize of `dict(%lu) at address %p` to `dict(%lu)` will result to loss of entries", LONG(dict->capacity), dict, LONG(n));
 
 #    if FORCE_ALLOC_RESIZE
-        // TODO
+        if (dict_resize_memory(dict, nsize) < 0)
+            return -1;
 #    endif
 
-        ssize_t used_size = dict->used_size - dict_count_only_from(dict, size);
+        const ssize_t rem = dict->used_size - dict_count_only_from(dict, nsize);
 
-        dict_set_capacity(dict, new_size, used_size, dict->lf);
+        dict_set_capacity(dict, nsize, rem, dict->lf);
         return 0;
     }
     // TODO
