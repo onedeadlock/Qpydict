@@ -1,7 +1,7 @@
 #ifndef QPy_TYPES_H
 #define QPy_TYPES_H
 
-#ifndef NO_PYAPI
+#ifndef NO_PyAPI
 #ifndef Py_SSIZE_T_CLEAN
 #define Py_SSIZE_T_CLEAN
 #endif
@@ -18,7 +18,7 @@
 typedef uintptr_t unsigned long int
 #endif
 
-#if NO_PYAPI
+#if NO_PyAPI
 typedef PyObject Type;
 typedef Py_ssize_t ssize_t;
 typedef Py_hash_t hash_t;
@@ -29,6 +29,10 @@ typedef unsigned long int hash_t
 #endif
 
 typedef uint8_t cache_t;
+
+typedef hash_t (hashfunc_t  *)(Type *key);
+typedef int    (cmpfunc_t   *)(Type *t, Type *u);
+typedef void   (clearfunc_t *)(Type *key, Type *value, void *arg);
 
 typedef struct
 {
@@ -55,14 +59,14 @@ typedef struct
 
 typedef struct
 {
-#ifndef NO_PYAPI
+#ifndef NO_PyAPI
     PyObject_HEAD
 #endif
     entry_t   entries;
 #ifdef NO_PYAPI
-    hash_t (hash  *)(Type *key);
-    int    (cmp   *)(Type *t, Type *u);
-    void   (clear *)(Type *key, Type *value);
+    hashfunc_t  hash;
+    cmpfunc_t   cmp;
+    clearfunc_t clear;
 #endif
     uintmax_t dict_id;
     ssize_t   capacity;
