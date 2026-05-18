@@ -23,9 +23,13 @@
 #define LONG(x)    (long)(x)
 
 #define DCR(x) --(x)
-#define PLUSNGROUP(x)     ((x) + NGROUP)
+#define ICR(x) ++(x)
+#define SET(x, y)     ((x)   = (y))
+#define XSET(x, y)    (((x) += (y)), 1)
+#define ICRNGROUP(x)  ((x)  += NGROUP)
+#define PLUSNGROUP(x) ((x)   + NGROUP)
+#define LASTGRP(x)    (ALIGNU(x/NGROUP, NGROUP) - NGROUP)
 #define get_NEXT_GROUP(x) ((x) += NGROUP)
-#define LASTGRP(x) (ALIGNU(x/NGROUP, NGROUP) - NGROUP)
 
 #define out_of_range_lf(lf) ((lf) < .3 OR(lf) > 1.)
 #define inc_entry_size(d) ++((d)->used_size)
@@ -445,24 +449,24 @@ local_inline visit_t new_visit_struct_from(QPyDictObject *dict, ssize_t i)
 local_inline int visit_next_nonempty_group(visit_t *v)
 {
     assert(NULL != v);
-    if (v->size < 1)
-        return (v->group = NULL) != NULL;
-    // CRITICAL: implement v->at (current group index)
+
+    size_t i = 0;
+
     while (true)
     {
         v->mask = mm_test_hasentry(mm_load(v->group));
         if (LIKELY(v->mask))
-            return 1;
-        if (DCR(v->size) == 0)
-            return (v->group = NULL) != NULL;
+            return XSET(v->at, i * NGROUP);
+        if (ICR(i) < v->size)
+            return SET(v->group, NULL);
         get_NEXT_GROUP(v->group);
 
         // unrolled
         v->mask = mm_test_hasentry(mm_load(v->group));
         if (LIKELY(v->mask))
-            return 1;
-        if (DCR(v->size) == 0)
-            return (v->group = NULL) != NULL;
+            return XSET(v->at, i * NGROUP);
+        if (ICR(i) < v->size)
+            return SET(v->group, NULL);
         get_NEXT_GROUP(v->group);
     }
     UNREACHABLE();
