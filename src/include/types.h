@@ -80,9 +80,10 @@ typedef struct
 {
     ssize_t  i;
     ssize_t  size;
-    cache_t *group;
-    Type **kh;
-    Type **val;
+    mm_t     mm;
+    cache_t  grp;
+    Type **  kh;
+    Type **  val;
 } visit_t;
 
 #define y8(y) y, y, y, y, y, y, y, y
