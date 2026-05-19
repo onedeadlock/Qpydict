@@ -466,6 +466,9 @@ local_inline visit_t new_visit_struct_from(QPyDictObject *dict, ssize_t i)
     for (uint64_t j = 0, m = 0; (v.i < v.size) && true; nextgroup(v.i)) \
         for (m=getmask(v.grp + v.i); m; m &= m - 1)
 
+#define dict_for_each_ext(v)\
+    for (uint64_t p=0, g=0, k=((v.i=g), 0), j=0; true; v.i=slot(v.grp, g, p), next_slot(p, k))
+
 #define dict_for_each(v, ...) dict_for_each_call_meth(dict_for_each_, v, __VA_ARGS__)
 
 #define dict_for_each_mask(v) dict_for_each_call_meth(dict_for_each_mask_, v)
@@ -721,6 +724,9 @@ local void *dict_merge_nocopy(QPyDictObject *dict, QPyDictObject *dict0)
     return NULL;
 }
 
+
+//  const size_t group_idx = find_group_from_hash(hash, dict->capacity);
+
 local ssize_t
 lookup_insert_generic_nodeleted(QPyDictObject *dict,
                                 Type *restrict key,
@@ -730,43 +736,27 @@ lookup_insert_generic_nodeleted(QPyDictObject *dict,
     assert(NULL != dict);
     assert(NULL != key);
  
-    const size_t  group_idx = find_group_from_hash(hash, dict->capacity);
     const uint8_t tag = ctag(hash);
     const mm_t    dup = mm_duplicate(tag);
 
-    size_t probe = 0, cnt = 0;
+    visit_t v = {0}; // TODO
+    dict_for_each_ext(v)
+    {
+        mm_t group = dict_for_each_set_group(v);
 
-    do {
-        size_t i     = dict_slot(dict, probe, group_idx);
-        mm_t   group = mm_load(dict->entries.cache + i);
-        mask_t mask  = mm_test_equal(group, dup);
-
-        for (khpair_t it = dict->entries.kh + i; mask;
-             mask &= mask - 1)
+        dict_for_each_set_bit_in_mask_cmp(v, dup)
         {
-            int j   = mm_scan_mask(mask);
-            int cmp = key_generic_compare(it + j, key, hash);
-
+            khpair_t kh = dict_for_each_get_kh(v);
+            int cmp = key_generic_compare(kh, key, hash);
             if (UNLIKELY(cmp < 0))
                 return -1;
             if (cmp)
-                return dict_update_key_in_entry(dict,
-                                                key,
-                                                value,
-                                                j);
+                return dict_update_key_in_entry(dict, key, value, dict_for_each_get_index());
         }
-        mask = mm_test_empty(group); // TODO
+        // TODO: mask = test_empty()
         if (LIKELY(mask))
-            return dict_add_entry(dict,
-                                  key,
-                                  value,
-                                  hash,
-                                  tag,
-                                  mm_scan_mask(mask));
-
-        probe_next_dict_slot(probe, cnt);
-    } while (true);
-
+            return dict_add_entry(dict, key, value, hash, tag, mm_scan_mask(mask));
+    }
     UNREACHABLE();
 }
 
@@ -779,41 +769,33 @@ lookup_insert_generic(QPyDictObject *dict,
     assert(NULL != dict);
     assert(NULL != key);
 
-    const size_t group_idx = find_group_from_hash(hash, dict->capacity);
-    const uint8_t tag      = ctag(hash);
-    const mm_t dup         = mm_duplicate(tag);
-
-    size_t probe = 0, cnt = 0;
     ssize_t k = -1;
+    const uint8_t tag = ctag(hash);
+    const mm_t    dup = mm_duplicate(tag);
 
-    do {
-        size_t i     = dict_slot(dict, probe, group_idx);
-        mm_t   group = mm_load(dict->entries.cache + i);
-        mask_t mask  = mm_test_equal(group, dup);
+    visit_t v = {0};
+    dict_for_each_ext(v)
+    {
+        mm_t group = dict_for_each_set_group(v);
 
-        for (khpair_t it = dict->entries.kh + i; mask; mask &= mask - 1)
+        dict_for_each_set_bit_in_mask_cmp(v, dup)
         {
-            int j   = mm_scan_mask(mask);
-            int cmp = key_generic_compare(it + j, key, hash);
-
+            khpair_t kh = dict_for_each_get_kh(v);
+            int cmp = key_generic_compare(kh, key, hash);
             if (UNLIKELY(cmp < 0))
                 return -1;
             if (cmp)
-                return dict_update_key_in_entry(dict,
-                                                key,
-                                                value,
-                                                j);
+                return dict_update_key_in_entry(dict, key, value, dict_for_each_get_index());
         }
-        if (k < 0)
-            k = mm_find_empty_slot(group); // TODO
+        if (k < 0) k = mm_find_empty_slot(group);
 
-        if (LIKELY(mm_test_empty_fast(group)))
-            break; // TODO
-        probe_next_dict_slot(probe, cnt);
-    } while (true);
-
-    if (k != -1)
-        return dict_add_entry(dict, key, value, hash, tag,k);
+        if (mm_test_empty_fast(group))
+        {
+            if (k != -1)
+                return dict_add_entry(dict, key, value, hash, tag, k + v.i);
+            return -1;
+        }
+    }
     UNREACHABLE();
 }
 
@@ -823,33 +805,25 @@ lookup_generic(QPyDictObject *dict, Type *key, hash_t hash)
     assert(NULL != dict);
     assert(NULL != key);
 
-    const size_t  group_idx = find_group_from_hash(hash, dict->capacity);
-    const uint8_t tag       = ctag(hash);
-    const mm_t    dup       = mm_duplicate(tag);
+    const uint8_t tag = ctag(hash);
+    const mm_t    dup = mm_duplicate(tag);
 
-    size_t probe = 0, cnt = 0;
+    dict_for_each_ext(v)
+    {
+        mm_t group = dict_for_each_set_group(v);
 
-    do {
-        size_t i     = dict_slot(dict, probe, group_idx);
-        mm_t   group = mm_load(dict->entries.cache + i);
-        mask_t mask  = mm_test_equal(group, dup);
-
-        for (khpair_t it = dict->entries.kh + i; mask;
-             mask &= mask - 1)
+        dict_for_each_set_bit_in_mask_cmp(v, dup)
         {
-            int j   = mm_scan_mask(mask);
-            int cmp = key_generic_compare(it + j, key, hash);
-
+            khpair_t kh = dict_for_each_get_kh(v);
+            int cmp = key_generic_compare(kh, key, hash);
             if (UNLIKELY(cmp < 0))
                 return -1;
             if (cmp)
-                return 0;
+                return dict_update_key_in_entry(dict, key, value, dict_for_each_get_index());
         }
-        if (LIKELY(mm_test_empty_fast(group)))
-            break;
-        probe_next_dict_slot(probe, cnt);
-    } while (true);
-
+        if (mm_test_empty_fast(group))
+            return -1;
+    }
     UNREACHABLE();
 }
 
