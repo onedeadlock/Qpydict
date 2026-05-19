@@ -78,9 +78,11 @@ typedef struct
 
 typedef struct
 {
-    cache_t *group;
+    ssize_t  i;
     ssize_t  size;
-    mask_t   mask;
+    cache_t *group;
+    Type **kh;
+    Type **val;
 } visit_t;
 
 #define y8(y) y, y, y, y, y, y, y, y

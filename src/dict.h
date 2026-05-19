@@ -439,67 +439,67 @@ local_inline visit_t new_visit_struct_from(QPyDictObject *dict, ssize_t i)
     visit_t v = {
         .group = dict->entries.cache + i,
         .size  = ALIGN(i, NGROUP),
-        .mask  = 0,
         .at    = 0 // TODO: CRITICAL
     };
 
     return v;
 }
 
-local_inline int visit_next_nonempty_group(visit_t *v)
-{
-    assert(NULL != v);
+#define dict_for_each_call_method(mth, v)           \
+    mth((v),                                    \
+        ___qpyj___,                             \
+        ___qpymask__,                           \
+        mm_test_has_entry_l,                    \
+        mm_scan_mask,                           \
+        NEXT_GROUP                              \
+       )
 
-    size_t i = 0;
+#define dict_for_each_(v, j, m, getmask, scanmask, nextgroup)          \
+    for (uint64_t j = 0, m = 0; (v.i < v.size) && true; nextgroup(v.i)) \
+        for (m=getmask(v.grp + v.i); (m) && (j=scanmask(m) | v.i); m &= m - 1)
 
-    while (true)
-    {
-        v->mask = mm_test_hasentry(mm_load(v->group));
-        if (LIKELY(v->mask))
-            return XSET(v->at, i * NGROUP);
-        if (ICR(i) < v->size)
-            return SET(v->group, NULL);
-        get_NEXT_GROUP(v->group);
+#define dict_for_each_mask_(v, j, m, getmask, scanmask, nextgroup)                 \
+    for (uint64_t j = 0, m = 0; (v.i < v.size) && true; nextgroup(v.i)) \
+        for (m=getmask(v.grp + v.i); m;)
 
-        // unrolled
-        v->mask = mm_test_hasentry(mm_load(v->group));
-        if (LIKELY(v->mask))
-            return XSET(v->at, i * NGROUP);
-        if (ICR(i) < v->size)
-            return SET(v->group, NULL);
-        get_NEXT_GROUP(v->group);
-    }
-    UNREACHABLE();
-}
+#define dict_for_each_set_bit_in_mask_(v, j, m, getmask, scanmask, nextgroup)                 \
+    for (uint64_t j = 0, m = 0; (v.i < v.size) && true; nextgroup(v.i)) \
+        for (m=getmask(v.grp + v.i); m; m &= m - 1)
+
+#define dict_for_each(v, ...) dict_for_each_call_meth(dict_for_each_, v, __VA_ARGS__)
+
+#define dict_for_each_mask(v) dict_for_each_call_meth(dict_for_each_mask_, v)
+
+#define dict_for_each_mask(v) dict_for_each_call_meth(dict_for_each_set_bit_in_mask_, v)
+
+#define dict_for_each_set_bit_in_mask(v) dict_for_each_call_meth(dict_for_each_set_bit_in_mask_, v)
+
+#define dict_for_each_get_index()  (___qpyj___)
+#define dict_for_each_get_mask()   (___qpymask___)
+#define dict_for_each_next_mask()  (___qpymask___=0)
+
+#define dict_for_each_get_key(v)   ((v).kh[__qpyj__].key)
+#define dict_for_each_get_hash(v)  ((v).kh[__qpyj__].hash)
+#define dict_for_each_get_value(v) ((v).val[__qpyj__])
 
 local warn_unused int
-dict_visit_all_do(QPyDictObject *dict,
+dict_for_each_do(QPyDictObject *dict,
                   const void    *arg,
-                  int  (do_func *)(const ckhpair_t *kh,
+                  int  (do_func *)(const Type *key,
                                    const Type *val,
                                    void *arg))
 {
     assert(NULL != dict);
 
-    visit_t v   = new_visit_struct(dict);
-    ssize_t ret = 1;
+    visit_t v = new_visit_struct(dict);
 
     // TODO:  mark CRITICAL SECTION
-    while (visit_next_nonempty_group(&v))
+    dict_for_each(v)
     {
-        mask_t mask = v.mask;
-        while (LIKELY(mask AND ret))
-        {
-            size_t j = v.at | mm_scan_mask(mask);
-
-            ckhpair_t *pkh = dict->entries.kh[j].key;
-            Type      *val = dict->entries.values[j];
-
-            mask &= mask - 1;
-            ret   = do_func(pkh, val, arg);
-        }
+        if (do_func(dict_for_each_get_key(v), dict_for_each_get_value(v), arg) < 0)
+            return -1;
     }
-    return -!ret;
+    return 0;
 }
 
 local_inline ssize_t
@@ -508,8 +508,11 @@ dict_count_only_from(QPyDictObject *dict, ssize_t i)
     visit_t v = new_visit_struct_from(dict, i);
     ssize_t j = 0;
     
-    while (visit_next_nonempty_group(&v))
-        j += POPCNT(v.mask);
+    dict_for_each_mask(v)
+    {
+        j += POPCNT(dict_for_each_get_mask());
+        dict_for_each_next_mask();
+    }
     return j;
 }
 
@@ -609,18 +612,15 @@ local void *dict_remove(QPyDictObject *dict)
 
 #ifdef NO_PyAPI
     if (NULL != clear)
-        dict_visit_all_do(alias, NULL, clear);
+        dict_for_each_do(alias, NULL, clear);
 #else
-    for (visit_t v = new_visit_struct(&alias); visit_next_nonempty_group(&v);)
-        for (mask_t = v->mask; mask; mask &= mask - 1)
-        {
-            size_t j = v->at | mm_scan_mask(mask);
-            Type  *k = alias.entries.kh[j].key;
-            Type  *v = alias.entries.values[j];
+    visit_t v = new_visit_struct(&alias);
 
-            Py_DECREF(k);
-            Py_DECREF(v);
-        }
+    dict_for_each(v)
+    {
+        Py_DECREF(dict_for_each_get_key(v));
+        Py_DECREF(dict_for_each_get_value(v));
+    }
 #endif
     calloc_free(alias.entries.cache);
     _free(alias.entries.kh);
@@ -637,26 +637,17 @@ dict_copy(QPyDictObject * restrict dest, QPyDictObject * restrict src)
     if (k < 0)
         return -1;
 
-    khpair_t *khp = src->entries.kh;
-    Type **val    = src->entries.values;
-    int ret       = 1;
-
-    for (visit_t v = new_visit_struct(src); ret AND visit_nonempty_group(&v))
+    visit_t v = new_visit_struct(src);
+    dict_for_each(v)
     {
-        mask_t mask = v.mask;
-        while (mask)
+        khpair_t *k = v.kh[dict_for_each_get_index()];
+        Type *    v = dict_for_each_get_value(v);
+        
+        if (lookup_insert_nodeleted(d, k.key, v, k.hash))
         {
-            const size_t   j  = v.at | mm_scan_mask(mask);
-            const khpair_t kh = khp[j];
-
-            mask &= mask - 1;
-            ret = NOT lookup_insert_nodeleted(d, kh.key, val[j], kh.hash);
+            dict_remove(dest);
+            return -1;
         }
-    }
-    if (NOT ret)
-    {
-        dict_remove(dest);
-        return -1;
     }
     dest->used_size = src->used_size;
     return 0;
@@ -672,21 +663,18 @@ dict_ncopy(QPyDictObject * restrict dest, QPyDictObject * restrict src, size_t n
     if (k < 0)
         return -1;
 
-    khpair_t *khp = src->entries.kh;
-    Type **val    = src->entries.values;
-    size_t ngroup = ALIGNU(n) / NGROUP, i = 0;
-
-    for (visit_t v = new_visit_struct(dict); ngroup AND visit_nonempty_group(&v); DCR(ngroup))
+    size_t  i = dict_count_from(dict, n);
+    visit_t v = new_visit_struct_from(dict, n);
+    // TODO: put count inside loop
+    dict_for_each(v)
     {
-        mask_t mask = v.mask;
-        i += POPCNT(mask); // count non-empty entries
-        while (mask)
-        {
-            const size_t   j  = v.at | mm_scan_mask(mask);
-            const khpair_t kh = khp[j];
+        khpair_t kh  = v.kh[dict_for_each_get_index()];
+        Type *   val = dict_for_each_get_value(v);
 
-            mask &= mask - 1;
-            lookup_insert_nodeleted(d, kh.key, val[j], kh.hash);
+        if (lookup_insert_nodeleted(d, kh.key, val, kh.hash))
+        {
+            dict_remove(dest);
+            return -1;
         }
     }
     dest->used_size = i; // number of non-empty entries
