@@ -420,12 +420,12 @@ local_inline visit_t new_visit_struct(QPyDictObject *dict)
     assert(NULL != dict);
 
     visit_t v = {
-        .group = dict->entries.cache,
-        .size  = dict->group_capacity,
-        .mask  = 0,
-        .at    = 0 // TODO: CRITICAL 
+        .i    = 0,
+        .size = dict->group_capacity,
+        .grp  = dict->entries.cache,
+        .kh   = dict->entries.kh,
+        .val  = dict->entries.values 
     };
-
     return v;
 }
 
@@ -434,12 +434,14 @@ local_inline visit_t new_visit_struct_from(QPyDictObject *dict, ssize_t i)
     assert(NULL != dict);
     assert(i < dict->capacity);
 
+    // TODO: set correct values
     visit_t v = {
-        .group = dict->entries.cache + i,
-        .size  = ALIGN(i, NGROUP),
-        .at    = 0 // TODO: CRITICAL
+        .i    = 0,
+        .size = dict->group_capacity,
+        .grp  = dict->entries.cache,
+        .kh   = dict->entries.kh,
+        .val  = dict->entries.values 
     };
-
     return v;
 }
 
@@ -511,15 +513,17 @@ local_inline visit_t new_visit_struct_from(QPyDictObject *dict, ssize_t i)
 #define dict_for_each_mask(v) dict_for_each_call_meth(dict_for_each_mask_, v)
 #define dict_for_each(v) dict_for_each_call_meth(dict_for_each_, v)
 #define dict_for_each_set_ent(v) dict_for_each_call_meth(dict_for_each_set_ent_, v)
-
-/* The below macros are to access common properties within the dict_for_each* block */
-#define dict_for_each_get_index()  (___qpyj___)
-#define dict_for_each_get_mask()   (___qpymask___)
 #define dict_for_each_next_mask()  (___qpymask___=0)
-#define dict_for_each_get_kh(v)    ((v).kh[__qpyj__])
-#define dict_for_each_get_key(v)   ((v).kh[__qpyj__].key)
-#define dict_for_each_get_hash(v)  ((v).kh[__qpyj__].hash)
-#define dict_for_each_get_value(v) ((v).val[__qpyj__])
+
+/* The below macros are to access common properties within the dict_for_each* block through the visit struct */
+#define dict_vst_get_group_index(v) ((v).i)
+#define dict_vst_get_mm_group(v)    ((v).mm)
+#define dict_vst_get_index(v) (___qpyj___)
+#define dict_vst_get_mask(v)  (___qpymask___)
+#define dict_vst_get_kh(v)    ((v).kh[__qpyj__])
+#define dict_vst_get_key(v)   ((v).kh[__qpyj__].key)
+#define dict_vst_get_hash(v)  ((v).kh[__qpyj__].hash)
+#define dict_vst_get_value(v) ((v).val[__qpyj__])
 
 local warn_unused int
 dict_for_each_do(QPyDictObject *dict,
@@ -535,7 +539,7 @@ dict_for_each_do(QPyDictObject *dict,
     // TODO:  mark CRITICAL SECTION
     dict_for_each(v)
     {
-        if (do_func(dict_for_each_get_key(v), dict_for_each_get_value(v), arg) < 0)
+        if (do_func(dict_vst_get_key(v), dict_vst_get_value(v), arg) < 0)
             return -1;
     }
     return 0;
@@ -549,7 +553,7 @@ dict_count_only_from(QPyDictObject *dict, ssize_t i)
     
     dict_for_each_mask(v)
     {
-        j += POPCNT(dict_for_each_get_mask());
+        j += POPCNT(dict_vst_get_mask(v));
         dict_for_each_next_mask();
     }
     return j;
@@ -630,10 +634,9 @@ dict_rehash(QPyDictObject *dict, size_t n)
 
     dict_remove(dict); // remove old dict
 #ifndef NO_PyAPI
-    // manually copy each members (let's just avoid problems from PyObject_HEAD)
-    dict_set_alias(&d, dict);
+    dict_set_alias(&d, dict); // manually copy each members (to avoid problems from PyObject_HEAD)
 #else
-    *dict = d; // direct copy (no PyObject_HEAD anywhere right?)
+    *dict = d; // direct copy
 #endif
     return 0;
 }
@@ -657,8 +660,8 @@ local void *dict_remove(QPyDictObject *dict)
 
     dict_for_each(v)
     {
-        Py_DECREF(dict_for_each_get_key(v));
-        Py_DECREF(dict_for_each_get_value(v));
+        Py_DECREF(dict_vst_get_key(v));
+        Py_DECREF(dict_vst_get_value(v));
     }
 #endif
     calloc_free(alias.entries.cache);
@@ -671,18 +674,16 @@ dict_copy(QPyDictObject * restrict dest, QPyDictObject * restrict src)
 {
     if (dict_isempty(src))
         return NULL;
-
-    const size_t k = dict_acquire_memory(&dest, n);
-    if (k < 0)
+    if (dict_acquire_memory(&dest, n) < 0)
         return -1;
 
     visit_t v = new_visit_struct(src);
     dict_for_each(v)
     {
-        khpair_t *k = v.kh[dict_for_each_get_index()];
-        Type *    v = dict_for_each_get_value(v);
+        khpair_t *kh  = dict_vst_get_kh(v);
+        Type *    val = dict_vst_get_value(v);
         
-        if (lookup_insert_nodeleted(d, k.key, v, k.hash))
+        if (lookup_insert_nodeleted(d, kh.key, val, kh.hash))
         {
             dict_remove(dest);
             return -1;
@@ -697,26 +698,25 @@ dict_ncopy(QPyDictObject * restrict dest, QPyDictObject * restrict src, size_t n
 {
     if (dict_isempty(dict))
         return NULL;
-
-    const size_t k = dict_acquire_memory(&dest, n);
-    if (k < 0)
+    if (dict_acquire_memory(&dest, n) < 0)
         return -1;
 
-    size_t  i = dict_count_from(dict, n);
+    size_t  i = 0; // count copied entries
     visit_t v = new_visit_struct_from(dict, n);
-    // TODO: put count inside loop
+
     dict_for_each(v)
     {
-        khpair_t kh  = v.kh[dict_for_each_get_index()];
-        Type *   val = dict_for_each_get_value(v);
+        khpair_t kh  = dict_vst_get_kh(v);
+        Type *   val = dict_vst_get_value(v);
 
         if (lookup_insert_nodeleted(d, kh.key, val, kh.hash))
         {
             dict_remove(dest);
             return -1;
         }
+        ICR(i);
     }
-    dest->used_size = i; // number of non-empty entries
+    dest->used_size = i;
     return 0;
 }
 
@@ -774,22 +774,21 @@ lookup_insert_generic_nodeleted(QPyDictObject *dict,
  
     const uint8_t tag = ctag(hash);
     const mm_t    dup = mm_duplicate(tag);
-
     visit_t v = {0}; // TODO
-    dict_for_each_ext(v)
-    {
-        mm_t group = dict_for_each_set_group(v);
 
-        dict_for_each_set_bit_in_mask_cmp(v, dup)
+    dict_for_each_cmp(v)
+    {
+        dict_for_each_cmp_set_ent(v, dup)
         {
-            khpair_t kh = dict_for_each_get_kh(v);
+            khpair_t kh = dict_vst_get_kh(v);
             int cmp = key_generic_compare(kh, key, hash);
             if (UNLIKELY(cmp < 0))
                 return -1;
             if (cmp)
-                return dict_update_key_in_entry(dict, key, value, dict_for_each_get_index());
+                return dict_update_key_in_entry(dict, key, value, dict_vst_get_index());
         }
-        // TODO: mask = test_empty()
+        
+        mask_t mask = mm_test_empty(dict_vst_get_mm_group(v));
         if (LIKELY(mask))
             return dict_add_entry(dict, key, value, hash, tag, mm_scan_mask(mask));
     }
@@ -808,27 +807,25 @@ lookup_insert_generic(QPyDictObject *dict,
     ssize_t k = -1;
     const uint8_t tag = ctag(hash);
     const mm_t    dup = mm_duplicate(tag);
-
     visit_t v = {0};
-    dict_for_each_ext(v)
-    {
-        mm_t group = dict_for_each_set_group(v);
 
-        dict_for_each_set_bit_in_mask_cmp(v, dup)
+    dict_for_each_cmp(v)
+    {
+        dict_for_each_cmp_ent(v, dup)
         {
-            khpair_t kh = dict_for_each_get_kh(v);
+            khpair_t kh = dict_vst_get_kh(v);
             int cmp = key_generic_compare(kh, key, hash);
             if (UNLIKELY(cmp < 0))
                 return -1;
             if (cmp)
-                return dict_update_key_in_entry(dict, key, value, dict_for_each_get_index());
+                return dict_update_key_in_entry(dict, key, value, dict_vst_get_index(v));
         }
-        if (k < 0) k = mm_find_empty_slot(group);
+        if (k < 0) k = mm_find_empty_slot(dict_vst_get_mm_group(v));
 
-        if (mm_test_empty_fast(group))
+        if (mm_test_empty_fast(dict_vst_get_mm_group(v)))
         {
             if (k != -1)
-                return dict_add_entry(dict, key, value, hash, tag, k + v.i);
+                return dict_add_entry(dict, key, value, hash, tag, dict_vst_get_group_index(v)+k);
             return -1;
         }
     }
@@ -841,23 +838,21 @@ lookup_generic(QPyDictObject *dict, Type *key, hash_t hash)
     assert(NULL != dict);
     assert(NULL != key);
 
-    const uint8_t tag = ctag(hash);
-    const mm_t    dup = mm_duplicate(tag);
+    const mm_t dup = mm_duplicate(ctag(hash));
+    visit_t v = {0};
 
-    dict_for_each_ext(v)
+    dict_for_each_cmp(v)
     {
-        mm_t group = dict_for_each_set_group(v);
-
-        dict_for_each_set_bit_in_mask_cmp(v, dup)
+        dict_for_each_cmp_set_ent(v, dup)
         {
-            khpair_t kh = dict_for_each_get_kh(v);
+            khpair_t kh = dict_vst_get_kh(v);
             int cmp = key_generic_compare(kh, key, hash);
             if (UNLIKELY(cmp < 0))
                 return -1;
             if (cmp)
-                return dict_update_key_in_entry(dict, key, value, dict_for_each_get_index());
+                return dict_vst_get_index(v);
         }
-        if (mm_test_empty_fast(group))
+        if (mm_test_empty_fast(dict_vst_get_mm_group(v)))
             return -1;
     }
     UNREACHABLE();
@@ -883,16 +878,19 @@ lookup_generic(QPyDictObject *dict, Type *key, hash_t hash)
 #undef dict_for_each_
 #undef dict_for_each_mask_
 #undef dict_for_each_cmp
-#undef dict_for_each_cmp_set_ent#undef dict_for_each_mask
+#undef dict_for_each_cmp_set_ent
+#undef dict_for_each_mask
 #undef dict_for_each
 #undef dict_for_each_set_ent
-#undef dict_for_each_get_index
-#undef dict_for_each_get_mask
-#undef dict_for_each_next_mask
-#undef dict_for_each_get_kh
-#undef dict_for_each_get_key
-#undef dict_for_each_get_hash
-#undef dict_for_each_get_value
+#undef dict_vst_get_group_index
+#undef dict_vst_get_mm_group
+#undef dict_vst_get_index
+#undef dict_vst_get_mask
+#undef dict_vst_next_mask
+#undef dict_vst_get_kh
+#undef dict_vst_get_key
+#undef dict_vst_get_hash
+#undef dict_vst_get_value
 #else // QPy_MM_UNSUPPORTED
 #error
 #endif
