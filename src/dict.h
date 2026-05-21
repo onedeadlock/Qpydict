@@ -318,11 +318,8 @@ local_inline void
 dict_set_alias(const Dict * restrict dict, Dict * restrict alias)
 {
     assert(NULL != dict);
-
-    dict_set(alias,
-             dict->entries.kh, dict->entries.cache,
-             dict->entries.values, dict->capacity,
-             dict->used_size, dict->lf, dict->flags);
+#define dict_alias_copy dict_set_alias
+    return (void)memcpy(alias, dict, sizeof *dict);
 }
 
 locale_inline int
@@ -553,7 +550,6 @@ dict_count_only_from(Dict *dict, ssize_t i)
     }
     return j;
 }
-
 
 local_inline int dict_malloc_ckhv(void restrict **c,
                                   void restrict **v,
