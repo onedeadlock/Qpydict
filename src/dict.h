@@ -1,5 +1,8 @@
 #ifndef QPy_DICT_H
 #define QPy_DICT_H
+#ifndef QPy_MM_UNSUPPORTED
+#define dict_ qpydict_
+#define Dict  QPyDictObject
 
 /**                     DICT IMPLEMENTATION
  * (1) Internal
@@ -273,8 +276,57 @@ key_generic_compare(const khpair_t it,
     return cmp;
 }
 
+local_inline void
+dict_set(Dict *dict,
+         void *restrict che,
+         void *restrict val,
+         void *restrict kh,
+         size_t cap,
+         size_t size,
+         float lf,
+         uint8_t flag)
+{
+    assert(NULL != dict);
+
+    dict->entries.kh     = kh;
+    dict->entries.values = val;
+    dict->entries.cache  = che;
+    dict->flag           = flag;
+    dict_set_new_capacity_(dict, cap, size, lf);
+}
+
+local_inline void
+dict_set_new_capacity_(Dict *dict,
+                      size_t cap,
+                      size_t size,
+                      float   lf)
+{
+    dict->capacity       = cap;
+    dict->group_capacity = ALIGN(cap / NGROUP);
+    dict->max_size       = (lf * cap) + 0.5;
+    dict->used_size      = size;
+    dict->lf             = lf;
+}
+
+local_inline void dict_unset(Dict **dict)
+{
+    assert(NULL != dict);
+    *dict = empty_dict;
+}
+
+local_inline void
+dict_set_alias(const Dict * restrict dict, Dict * restrict alias)
+{
+    assert(NULL != dict);
+
+    dict_set(alias,
+             dict->entries.kh, dict->entries.cache,
+             dict->entries.values, dict->capacity,
+             dict->used_size, dict->lf, dict->flags);
+}
+
 locale_inline int
-dict_update_key_in_entry(QPyDictObject *dict,
+dict_update_key_in_entry(Dict *dict,
                          Type *restrict key,
                          Type *restrict value,
                          size_t j)
@@ -289,7 +341,7 @@ dict_update_key_in_entry(QPyDictObject *dict,
 }
 
 locale_inline size_t
-dict_add_entry(QPyDictObject *dict,
+dict_add_entry(Dict *dict,
                Type *restrict key,
                Type *restrict value,
                hash_t  hash,
@@ -311,93 +363,38 @@ dict_add_entry(QPyDictObject *dict,
     return 0;
 }
 
-local_inline void
-dict_set(QPyDictObject *dict,
-         void *restrict che,
-         void *restrict val,
-         void *restrict kh,
-         size_t cap,
-         size_t size,
-         float lf)
-{
-    assert(NULL != dict);
-    assert(0 == dict->capacity);
-
-    dict->entries.kh     = kh;
-    dict->entries.values = val;
-    dict->entries.cache  = che;
-    
-    dict_set_new_capacity(dict, cap, size, lf);
-}
-
-local_inline void
-dict_set_new_capacity(QPyDictObject *dict,
-                      size_t cap,
-                      size_t size,
-                      float   lf)
-{
-    dict->capacity       = cap;
-    dict->group_capacity = ALIGN(cap / NGROUP);
-    dict->max_size       = (lf * cap) + 0.5;
-    dict->used_size      = size;
-    dict->lf             = lf;
-}
-
-local_inline void dict_unset(QPyDictObject **dict)
-{
-    assert(NULL != dict);
-    *dict = empty_dict;
-}
-
-local_inline void
-dict_set_alias(QPyDictObject * restrict dict, QPyDictObject * restrict alias)
-{
-    assert(NULL != dict AND NULL != alias);
-
-    alias->entries.kh     = dict->entries.kh;
-    alias->entries.cache  = dict->entries.cache;
-    alias->entries.values = dict->entries.values;
-
-    alias->group_capacity = dict->group_capacity;
-    alias->capacity       = dict->capacity;
-    alias->max_size       = dict->max_size;
-    alias->used_size      = dict->used_size;
-    alias->lf             = dict->lf;
-    alias->flags          = dict->flags;
-}
-
-local_inline const size_t dict_size(const QPyDictObject *dict)
+local_inline const size_t dict_size(const Dict *dict)
 {
     assert(NULL != dict);
     return dict->used_size;
 }
 
-local_inline const size_t dict_capacity(const QPyDictObject *dict)
+local_inline const size_t dict_capacity(const Dict *dict)
 {
     assert(NULL != dict);
     return dict->capacity;
 }
 
-local_inline int dict_isempty(const QPyDictObject *dict)
+local_inline int dict_isempty(const Dict *dict)
 {
     assert(NULL != dict);
-    return dict->capacity == 0;
+    return dict->used_size == 0;
 }
 
-local_inline int dict_isunused(const QPyDictObject *dict)
+local_inline int dict_isunused(const Dict *dict)
 {
     assert(NULL != dict);
     return dict->capacity == 0;
 }
 
 local_inline const float
-dict_load_factor(const QPyDictObject *dict)
+dict_load_factor(const Dict *dict)
 {
     return dict->lf;
 }
 
 local_inline int
-dict_explicit_set_load_factor(QPyDictObject *dict, float lf)
+dict_explicit_set_load_factor(Dict *dict, float lf)
 {
     assert(NULL != dict);
 
@@ -413,7 +410,7 @@ dict_explicit_set_load_factor(QPyDictObject *dict, float lf)
     return 0;
 }
 
-local_inline visit_t new_visit_struct(QPyDictObject *dict)
+local_inline visit_t new_visit_struct(Dict *dict)
 {
     assert(NULL != dict);
 
@@ -427,7 +424,7 @@ local_inline visit_t new_visit_struct(QPyDictObject *dict)
     return v;
 }
 
-local_inline visit_t new_visit_struct_from(QPyDictObject *dict, ssize_t i)
+local_inline visit_t new_visit_struct_from(Dict *dict, ssize_t i)
 {
     assert(NULL != dict);
     assert(i < dict->capacity);
@@ -525,7 +522,7 @@ local_inline visit_t new_visit_struct_from(QPyDictObject *dict, ssize_t i)
 #define dict_vst_get_value(v) ((v).val[__qpyj__])
 
 local warn_unused int
-dict_for_each_do(QPyDictObject *dict,
+dict_for_each_do(Dict *dict,
                   const void    *arg,
                   int  (do_func *)(const Type *key,
                                    const Type *val,
@@ -544,7 +541,7 @@ dict_for_each_do(QPyDictObject *dict,
 }
 
 local_inline ssize_t
-dict_count_only_from(QPyDictObject *dict, ssize_t i)
+dict_count_only_from(Dict *dict, ssize_t i)
 {
     visit_t v = new_visit_struct_from(dict, i);
     ssize_t j = 0;
@@ -557,39 +554,64 @@ dict_count_only_from(QPyDictObject *dict, ssize_t i)
     return j;
 }
 
-local int
-dict_malloc_int(QPyDictObject **dict,
-                  const size_t size,
-                  const float   lf)
+
+local_inline int dict_malloc_ckhv(void restrict **c,
+                                  void restrict **v,
+                                  void restrict **kh)
 {
+    if (NOT cache_malloc(c, n))
+        return -1;
+    if (_malloc(&v, n * sizeof(Type *)) AND
+        _malloc(&kh, n * sizeof(khpair_t)))
+        return 0;
+    dict_free_ckhv(*c, *v, *kh);
+#   define dict_malloc_ckhv(c, v, kh) dict_malloc_ckhv(void*)c, (void*)v, (void*)kh)
+    return -1;
+}
+
+local_inline void dict_free_ckhv(void * restrict c,
+                                 void * restrict v,
+                                 void * restrict kh)
+{
+    return calloc_free(c), _free(v), _free(kh);
+}
+
+local_inline void dict_free_ckhv_in_entry(Dict *dict)
+{
+    assert(NULL dict);
+    entry_t ent = dict->entries;
+    return dict_free_ckhv(ent.cache, ent.values, ent.kh);
+}
+
+local int
+dict_malloc_int(Dict **dict,
+                size_t n,
+                float  lf)
+{
+    void *kh, *v, *c;
+    
     assert(NULL != dict AND NULL != *dict);
 
     if (out_of_range_lf(lf))
         return -1;
-    if (0 == size)
+    if (0 == n)
         return dict_unset(dict);
 
-    const size_t n = try_size_requirement(size, sizeof(khpair_t), lf);
-    if (0 == n) return -1;
-
-    void *kh, *v, *c;
-
-    if (NULL == cache_malloc(&c, n) OR
-        NULL == _malloc(&v, n * sizeof(Type *)) OR
-        NULL == _malloc(&kh, n * sizeof(khpair_t)))
-    {
-        cache_free(c), _free(v);
+    n = try_size_requirement(n, sizeof(khpair_t), lf);
+    if (0 == n)
         return -1;
-    }
+    if (dict_malloc_ckhv(&c, &v, &kh))
+        return -1;
     dict_set(*dict, c, v, kh, n, 0, lf);
+
     return n;
 }
 
-local void *dict_remove(QPyDictObject **dict)
+local void *dict_remove(Dict **dict)
 {
     assert(NULL != dict && NULL != *dict);
 
-    QPyDictObject alias = {0};
+    Dict alias = {0};
 #ifdef NO_PyAPI
     clearfunc_t clear = (*dict)->clear;
 #endif
@@ -609,17 +631,14 @@ local void *dict_remove(QPyDictObject **dict)
         Py_DECREF(dict_vst_get_value(v));
     }
 #endif
-    calloc_free(alias.entries.cache);
-    _free(alias.entries.kh);
-    _free(alias.entries.values);
-
+    dict_free_ckhv_in_entry(alias);
 #   define dict_remove(d) dict_remove(&d)
     return NULL;
 }
 
 warn_unused local void *
-dict_copy(QPyDictObject * restrict dest,
-          QPyDictObject * restrict src)
+dict_copy(Dict * restrict dest,
+          Dict * restrict src)
 {
     assert(NULL == src);
     if (dict_isempty(src))
@@ -650,8 +669,8 @@ dict_copy(QPyDictObject * restrict dest,
 }
 
 warn_unused local void *
-dict_ncopy(QPyDictObject * restrict dest,
-           QPyDictObject * restrict src,
+dict_ncopy(Dict * restrict dest,
+           Dict * restrict src,
            size_t n)
 {
     assert(NULL == src);
@@ -687,7 +706,7 @@ dict_ncopy(QPyDictObject * restrict dest,
     return dest;
 }
 
-local void *dict_clone(QPyDictObject *dict)
+local void *dict_clone(Dict *dict)
 {
     assert(NULL != dict);
     
@@ -698,9 +717,9 @@ local void *dict_clone(QPyDictObject *dict)
 }
 
 warn_unused local void *
-dict_merge(QPyDictObject *d1,
-           QPyDictObject *d2,
-           QPyDictObject **dest)
+dict_merge(Dict *d1,
+           Dict *d2,
+           Dict **dest)
 {
     assert(NULL != d1 && NULL != d2);
 
@@ -716,9 +735,9 @@ dict_merge(QPyDictObject *d1,
 }
 
 warn_unused local void *
-dict_merge_nocopy(QPyDictObject *dict,
-                  QPyDictObject *d1,
-                  QPyDictObject **dest)
+dict_merge_nocopy(Dict *dict,
+                  Dict *d1,
+                  Dict **dest)
 {
     assert(NULL != d1 && NULL != d2);
 
@@ -734,7 +753,7 @@ dict_merge_nocopy(QPyDictObject *dict,
 }
 
 local int
-dict_resize(QPyDictObject *dict, size_t n)
+dict_resize(Dict *dict, size_t n)
 {
     assert(NULL != dict);
 
@@ -748,9 +767,9 @@ dict_resize(QPyDictObject *dict, size_t n)
 }
 
 local_inline int
-dict_rehash(QPyDictObject *dict, size_t n)
+dict_rehash(Dict *dict, size_t n)
 {
-    QPyDictObject d = {0};
+    Dict d = {0};
 
     assert(0 != dict);
     if (0 == n)
@@ -777,7 +796,7 @@ dict_rehash(QPyDictObject *dict, size_t n)
 //  const size_t group_idx = find_group_from_hash(hash, dict->capacity);
 
 local ssize_t
-lookup_insert_generic_nodeleted(QPyDictObject *dict,
+lookup_insert_generic_nodeleted(Dict *dict,
                                 Type *restrict key,
                                 Type *restrict value,
                                 const hash_t   hash)
@@ -809,7 +828,7 @@ lookup_insert_generic_nodeleted(QPyDictObject *dict,
 }
 
 locale_inline ssize_t
-lookup_insert_generic(QPyDictObject *dict,
+lookup_insert_generic(Dict *dict,
                       Type *restrict key,
                       Type *restrict value,
                       const hash_t   hash)
@@ -850,7 +869,7 @@ lookup_insert_generic(QPyDictObject *dict,
 }
 
 locale_inline ssize_t
-lookup_generic(QPyDictObject *dict, Type *key, hash_t hash)
+lookup_generic(Dict *dict, Type *key, hash_t hash)
 {
     assert(NULL != dict);
     assert(NULL != key);
@@ -891,6 +910,9 @@ lookup_generic(QPyDictObject *dict, Type *key, hash_t hash)
 #undef PLUSNGROUP
 #undef LASTGRP
 #undef NEXT_GROUP
+
+#undef dict_
+#undef Dict
 #undef out_of_range_lf
 #undef inc_entry_size
 #undef dict_slot
