@@ -54,7 +54,6 @@ typedef struct
         Type   **values;
     };
     khpair_t *kh; // key & value pair
-    uint8_t   kind; // kind of keys in dict
 } entry_t;
 
 typedef struct
@@ -68,12 +67,12 @@ typedef struct
     cmpfunc_t   cmp;
     clearfunc_t clear;
 #endif
-    uintmax_t dict_id;
-    ssize_t   capacity;
-    ssize_t   group_capacity;
-    ssize_t   used_size; // number of put entries
-    size_t    max_size;   // maximum size, no resize
-    float     lf;
+    size_t  capacity;
+    size_t  group_capacity;
+    size_t  used_size; // number of put entries
+    size_t  max_size;   // maximum size, no resize
+    float   lf; // load factor
+    uint8_t flags; // internal use only (key kind, malloc)
 } QPyDictObject;
 
 typedef struct
@@ -89,10 +88,20 @@ typedef struct
 #define y8(y) y, y, y, y, y, y, y, y
 static const uint8_t
 empty_tag_full_group[NGROUP_MAX] = {
-    y8(EMPTY_ENTRY), y8(EMPTY_ENTRY),
-    y8(EMPTY_ENTRY), y8(EMPTY_ENTRY)
+    y8(EMPTY), y8(EMPTY),
+    y8(EMPTY), y8(EMPTY)
 };
 #undef y8
+static const QPyDictObject
+empty_dict = {
+#if NO_PyAPI
+    0, 0,
 #endif
+    {.cache=empty_tag_full_group, 0, 0},
+#ifndef NO_PyAPI
+    0, 0, 0,
+#endif
+    0, 0, 0, 0, 0, 0
+};
 
 #endif // QPy_TYPES_H

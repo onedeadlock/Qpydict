@@ -326,8 +326,8 @@ dict_set(QPyDictObject *dict,
     dict->entries.kh     = kh;
     dict->entries.values = val;
     dict->entries.cache  = che;
-
-    dict_set_new_capacity(cap, size, lf);
+    
+    dict_set_new_capacity(dict, cap, size, lf);
 }
 
 local_inline void
@@ -343,19 +343,10 @@ dict_set_new_capacity(QPyDictObject *dict,
     dict->lf             = lf;
 }
 
-local_inline void dict_unset(QPyDictObject *dict)
+local_inline void dict_unset(QPyDictObject **dict)
 {
     assert(NULL != dict);
-
-    dict->entries.cache  = empty_tag_full_group;
-    dict->entries.values = empty_keyval_group;
-    dict->entries.kh     = empty_values_group;
-
-    dict->group_capacity = 0;
-    dict->capacity       = 0;
-    dict->max_size       = 0;
-    dict->used_size      = 0;
-    dict->lf             = 0;
+    *dict = empty_dict;
 }
 
 local_inline void
@@ -372,30 +363,37 @@ dict_set_alias(QPyDictObject * restrict dict, QPyDictObject * restrict alias)
     alias->max_size       = dict->max_size;
     alias->used_size      = dict->used_size;
     alias->lf             = dict->lf;
+    alias->flags          = dict->flags;
 }
 
-local_inline const size_t dict_size(QPyDictObject *dict)
+local_inline const size_t dict_size(const QPyDictObject *dict)
 {
     assert(NULL != dict);
     return dict->used_size;
 }
 
-local_inline const size_t dict_capacity(QPyDictObject *dict)
+local_inline const size_t dict_capacity(const QPyDictObject *dict)
 {
     assert(NULL != dict);
     return dict->capacity;
 }
 
-local_inline int dict_isempty(QPyDictObject *dict)
+local_inline int dict_isempty(const QPyDictObject *dict)
 {
     assert(NULL != dict);
     return dict->capacity == 0;
 }
 
-local_inline int dict_isunused(QPyDictObject *dict)
+local_inline int dict_isunused(const QPyDictObject *dict)
 {
     assert(NULL != dict);
     return dict->capacity == 0;
+}
+
+local_inline const float
+dict_load_factor(const QPyDictObject *dict)
+{
+    return dict->lf;
 }
 
 local_inline int
@@ -485,13 +483,13 @@ local_inline visit_t new_visit_struct_from(QPyDictObject *dict, ssize_t i)
  * @dict_for_each_cmp_set_ent: main block for @dict_for_wach_cmp: compares each group with an @mmx group and generates a mask; visit every set entry in each generated mask.
  *  Note: it is only used under its top block @dict_for_each_cmp.
  */
-#define dict_for_each_cmp_set_ent_(v, j, m, _c, scan, _t, _p, _k, _g, _s, _n, cmp2, xmm, ...) \
+#define dict_cmp_for_each_set_ent_(v, j, m, _c, scan, _t, _p, _k, _g, _s, _n, cmp2, xmm, ...) \
     for (mask_t m=(v.mm=mm_load(v.grp+v.i), cmp2(v.mm, xmm)); (m) AND (j=scan(m)+v.i); m &= m - 1)
 
 /** @dict_for_each: visit every set entry in dict */
 #define dict_for_each_(v, j, m, cmp, scan, next, ...)   \
     for (size_t j=0; (v.i < v.size); next(v.i)) \
-        dict_for_each_set_bit_in_mask_(v, j, m, cmp, scan)
+        dict_for_each_set_ent_(v, j, m, cmp, scan)
 
 /**
  * @dict_for_each_mask: visit every set entry in dict
@@ -505,11 +503,12 @@ local_inline visit_t new_visit_struct_from(QPyDictObject *dict, ssize_t i)
  * @dict_for_each_cmp: the top block for @dict_for_each_cmp_set_ent; visits entries by probing.
  * It can be called independent of its main block though (an infinte loop trap)
  */ 
-#define dict_for_each_cmp(v, j, m, _c, _s, _n, p, k, g, slot, next_slot, ...) \
+#define dict_for_each_probe(v, j, m, _c, _s, _n, p, k, g, slot, next_slot, ...) \
     for (size_t p=0, k=0, j=0, g=v.i; (1); v.i=slot(p, g, v.size), next_slot(p, k))
 
 /* The below macros are defined for convenient call to the above macros */
-#define dict_for_each_cmp_set_ent(v, x) dict_for_each_call_meth(dict_for_each_cmp_set_ent_, v, mm_test_equal, x)
+#define dict_for_each_probe(v) dict_for_each_call_meth(dict_for_each_, v)
+#define dict_cmp_for_each_set_ent(v, x) dict_for_each_call_meth(dict_for_each_cmp_set_ent_, v, mm_test_equal, x)
 #define dict_for_each_mask(v) dict_for_each_call_meth(dict_for_each_mask_, v)
 #define dict_for_each(v) dict_for_each_call_meth(dict_for_each_, v)
 #define dict_for_each_set_ent(v) dict_for_each_call_meth(dict_for_each_set_ent_, v)
@@ -536,7 +535,6 @@ dict_for_each_do(QPyDictObject *dict,
 
     visit_t v = new_visit_struct(dict);
 
-    // TODO:  mark CRITICAL SECTION
     dict_for_each(v)
     {
         if (do_func(dict_vst_get_key(v), dict_vst_get_value(v), arg) < 0)
@@ -554,52 +552,185 @@ dict_count_only_from(QPyDictObject *dict, ssize_t i)
     dict_for_each_mask(v)
     {
         j += POPCNT(dict_vst_get_mask(v));
-        dict_for_each_next_mask();
+        dict_for_each_next_mask(v);
     }
     return j;
 }
 
 local int
-dict_acquire_memory(QPyDictObject *dict,
+dict_malloc_int(QPyDictObject **dict,
                   const size_t size,
                   const float   lf)
 {
-    assert(NULL != dict);
+    assert(NULL != dict AND NULL != *dict);
 
     if (out_of_range_lf(lf))
         return -1;
     if (0 == size)
-    {
-        dict_unset(dict);
-        return 0;
-    }
+        return dict_unset(dict);
 
     const size_t n = try_size_requirement(size, sizeof(khpair_t), lf);
-    if (0 == n)
-        return -1;
+    if (0 == n) return -1;
 
     void *kh, *v, *c;
 
-    if (NULL == cache_malloc(&c, n) OR NULL == _malloc(&v, n * sizeof(Type *)) OR NULL == _malloc(&kh, n * sizeof(khpair_t)))
+    if (NULL == cache_malloc(&c, n) OR
+        NULL == _malloc(&v, n * sizeof(Type *)) OR
+        NULL == _malloc(&kh, n * sizeof(khpair_t)))
     {
-        cache_free(c);
-        _free(v);
+        cache_free(c), _free(v);
         return -1;
     }
-    dict_set(dict, c, v, kh, n, 0, lf);
+    dict_set(*dict, c, v, kh, n, 0, lf);
     return n;
 }
 
-local_inline void dict_release_memory(QPyDictObject *dict)
+local void *dict_remove(QPyDictObject **dict)
 {
-    void *c = dict->entries.cache;
-    void *k = dict->entries.kh;
-    void *v = dict->entries.values;
+    assert(NULL != dict && NULL != *dict);
 
+    QPyDictObject alias = {0};
+#ifdef NO_PyAPI
+    clearfunc_t clear = (*dict)->clear;
+#endif
+
+    dict_alias_copy(*dict, &alias);
+    if (dict_owned_memory(*dict)) // TODO
+        _free(*dict);
     dict_unset(dict);
-    calloc_free(c);
-    _free(k);
-    _free(v);
+
+#ifdef NO_PyAPI
+    if (NULL != clear) dict_for_each_do(alias, NULL, clear);
+#else
+    visit_t v = new_visit_struct(&alias);
+    dict_for_each(v)
+    {
+        Py_DECREF(dict_vst_get_key(v));
+        Py_DECREF(dict_vst_get_value(v));
+    }
+#endif
+    calloc_free(alias.entries.cache);
+    _free(alias.entries.kh);
+    _free(alias.entries.values);
+
+#   define dict_remove(d) dict_remove(&d)
+    return NULL;
+}
+
+warn_unused local void *
+dict_copy(QPyDictObject * restrict dest,
+          QPyDictObject * restrict src)
+{
+    assert(NULL == src);
+    if (dict_isempty(src))
+        return NULL;
+#   if NO_PyAPI
+    if (NULL == dest)
+    {
+        if (NULL == (dest=_malloc(sizeof *src)))
+            return dest;
+        dict_set_owned_memory(dest); // TODO
+    }
+#   endif
+    
+    if (dict_malloc_int(dest, dict_size(src), dict_load_factor(src)) < 0)
+        return NULL;
+
+    visit_t v = new_visit_struct(src);
+    dict_for_each(v)
+    {
+        khpair_t *kh  = dict_vst_get_kh(v);
+        Type *    val = dict_vst_get_value(v);
+        
+        if (lookup_insert_nodeleted(d, kh.key, val, kh.hash))
+            return dict_remove(dest);
+    }
+    dict_set_size(dest, dict_size(src));
+    return dest;
+}
+
+warn_unused local void *
+dict_ncopy(QPyDictObject * restrict dest,
+           QPyDictObject * restrict src,
+           size_t n)
+{
+    assert(NULL == src);
+    if (dict_isempty(src))
+        return NULL;
+#   if NO_PyAPI
+    if (NULL == dest)
+    {
+        if (NULL == (dest=_malloc(sizeof *src)))
+            return dest;
+        dict_set_owned_memory(dest);
+    }
+#   endif
+
+    if (dict_malloc_int(dest, n, dict_load_factor(src)) < 0)
+        return NULL;
+
+    size_t  i = 0; // count copied entries
+    visit_t v = new_visit_struct(dict);
+
+    dict_for_each(v)
+    {
+        khpair_t kh  = dict_vst_get_kh(v);
+        Type *   val = dict_vst_get_value(v);
+
+        if (lookup_insert_nodeleted(d, kh.key, val, kh.hash))
+            return dict_remove(dest);
+        if (++i < n)
+            goto exit;
+    }
+ exit:
+    dict_set_size(dest, i);
+    return dest;
+}
+
+local void *dict_clone(QPyDictObject *dict)
+{
+    assert(NULL != dict);
+    
+    if (dict_isempty(dict))
+        return empty_dict;
+    // TODO
+    return NULL;
+}
+
+warn_unused local void *
+dict_merge(QPyDictObject *d1,
+           QPyDictObject *d2,
+           QPyDictObject **dest)
+{
+    assert(NULL != d1 && NULL != d2);
+
+    if (NOT dict_isempty(d1) AND dict_isempty(d2))
+        return dict_copy(*dest, d1);
+    if (dict_isempty(d1) AND NOT dict_isempty(d2))
+        return dict_copy(*dest, d1);
+
+    if (d1 == d2)
+        return dict_copy(*dest, d1);
+    // TODO:
+    return NULL;
+}
+
+warn_unused local void *
+dict_merge_nocopy(QPyDictObject *dict,
+                  QPyDictObject *d1,
+                  QPyDictObject **dest)
+{
+    assert(NULL != d1 && NULL != d2);
+
+    if (NOT dict_isempty(d1) AND dict_isempty(d2))
+        return dict_copy(*dest, d1);
+    if (dict_isempty(d1) AND NOT dict_isempty(d2))
+        return dict_copy(*dest, d1);
+ 
+    if (d1 == d2)
+        return d1;
+    // TODO
+    return NULL;
 }
 
 local int
@@ -628,138 +759,20 @@ dict_rehash(QPyDictObject *dict, size_t n)
     if (n < dict->used_size)
         LOG(stderr, "resize of `dict(%lu) at address %p` to `dict(%lu)` will result to loss of entries", LONG(dict->capacity), dict, LONG(n));
 
-    const int ret = n < dict->max_size ? dict_ncopy(&d, dict, n) : dict_copy(&d, dict);
-    if (ret < 0)
+    if ((n < dict->max_size ? dict_ncopy(&d, dict, n) : dict_copy(&d, dict)) < 0)
         return ret;
 
-    dict_remove(dict); // remove old dict
+    // remove dict
+    dict_remove(dict);
+
+    // copy to old dict
 #ifndef NO_PyAPI
-    dict_set_alias(&d, dict); // manually copy each members (to avoid problems from PyObject_HEAD)
+    dict_set_alias(&d, dict);
 #else
-    *dict = d; // direct copy
+    *dict = d;
 #endif
     return 0;
 }
-
-local void *dict_remove(QPyDictObject *dict)
-{
-    assert(NULL != dict);
-
-    QPyDictObject alias = {0};
-#ifdef NO_PyAPI
-    clearfunc_t clear = dict->clear;
-#endif
-    dict_alias_copy(dict, &alias);
-    dict_unset(dict);
-
-#ifdef NO_PyAPI
-    if (NULL != clear)
-        dict_for_each_do(alias, NULL, clear);
-#else
-    visit_t v = new_visit_struct(&alias);
-
-    dict_for_each(v)
-    {
-        Py_DECREF(dict_vst_get_key(v));
-        Py_DECREF(dict_vst_get_value(v));
-    }
-#endif
-    calloc_free(alias.entries.cache);
-    _free(alias.entries.kh);
-    _free(alias.entries.values);
-}
-
-local int
-dict_copy(QPyDictObject * restrict dest, QPyDictObject * restrict src)
-{
-    if (dict_isempty(src))
-        return NULL;
-    if (dict_acquire_memory(&dest, n) < 0)
-        return -1;
-
-    visit_t v = new_visit_struct(src);
-    dict_for_each(v)
-    {
-        khpair_t *kh  = dict_vst_get_kh(v);
-        Type *    val = dict_vst_get_value(v);
-        
-        if (lookup_insert_nodeleted(d, kh.key, val, kh.hash))
-        {
-            dict_remove(dest);
-            return -1;
-        }
-    }
-    dest->used_size = src->used_size;
-    return 0;
-}
-
-local int
-dict_ncopy(QPyDictObject * restrict dest, QPyDictObject * restrict src, size_t n)
-{
-    if (dict_isempty(dict))
-        return NULL;
-    if (dict_acquire_memory(&dest, n) < 0)
-        return -1;
-
-    size_t  i = 0; // count copied entries
-    visit_t v = new_visit_struct_from(dict, n);
-
-    dict_for_each(v)
-    {
-        khpair_t kh  = dict_vst_get_kh(v);
-        Type *   val = dict_vst_get_value(v);
-
-        if (lookup_insert_nodeleted(d, kh.key, val, kh.hash))
-        {
-            dict_remove(dest);
-            return -1;
-        }
-        ICR(i);
-    }
-    dest->used_size = i;
-    return 0;
-}
-
-local void *dict_clone(QPyDictObject *dict)
-{
-    assert(NULL != dict);
-
-    if (0 == size)
-        size = dict->capacity;
-    if (dict_isempty(dict))
-        return NULL;
-    // TODO
-    return NULL;
-}
-
-local void *dict_merge(QPyDictObject *dict, QPyDictObject *dict0)
-{
-    assert(NULL != dict && NULL != dict0);
-
-    if (0 == size)
-        size = dict->used_size;
-    if (dict_isempty(dict) AND dict_isempty(dict0))
-        return NULL;
-    if (dict == dict0)
-        return dict_copy(dict);
-    // TODO:
-    return NULL;
-}
-
-local void *dict_merge_nocopy(QPyDictObject *dict, QPyDictObject *dict0)
-{
-    assert(NULL != dict && NULL != dict0);
-
-    if (0 == size)
-        size = dict->used_size;
-    if (dict_isempty(dict) AND dict_isempty(dict0))
-        return NULL;
-    if (dict == dict0)
-        return dict;
-    // TODO
-    return NULL;
-}
-
 
 //  const size_t group_idx = find_group_from_hash(hash, dict->capacity);
 
@@ -776,9 +789,9 @@ lookup_insert_generic_nodeleted(QPyDictObject *dict,
     const mm_t    dup = mm_duplicate(tag);
     visit_t v = {0}; // TODO
 
-    dict_for_each_cmp(v)
+    dict_for_each_probe(v)
     {
-        dict_for_each_cmp_set_ent(v, dup)
+        dict_cmp_for_each_set_ent(v, dup)
         {
             khpair_t kh = dict_vst_get_kh(v);
             int cmp = key_generic_compare(kh, key, hash);
@@ -804,14 +817,15 @@ lookup_insert_generic(QPyDictObject *dict,
     assert(NULL != dict);
     assert(NULL != key);
 
-    ssize_t k = -1;
+    bool    t = true; // true if k is unset
+    size_t  k = 0;
+    visit_t v = {0};
     const uint8_t tag = ctag(hash);
     const mm_t    dup = mm_duplicate(tag);
-    visit_t v = {0};
 
-    dict_for_each_cmp(v)
+    dict_for_each_probe(v)
     {
-        dict_for_each_cmp_ent(v, dup)
+        dict_cmp_for_each_set_ent(v, dup)
         {
             khpair_t kh = dict_vst_get_kh(v);
             int cmp = key_generic_compare(kh, key, hash);
@@ -820,12 +834,15 @@ lookup_insert_generic(QPyDictObject *dict,
             if (cmp)
                 return dict_update_key_in_entry(dict, key, value, dict_vst_get_index(v));
         }
-        if (k < 0) k = mm_find_empty_slot(dict_vst_get_mm_group(v));
+
+        mask_t UNUSED(m) = 0;
+        if ((t) AND (m=mm_find_empty_slot(dict_vst_get_mm_group(v))))
+            k=dict_vst_get_group_index(v)+mm_scan_mask(m), t=false;
 
         if (mm_test_empty_fast(dict_vst_get_mm_group(v)))
         {
-            if (k != -1)
-                return dict_add_entry(dict, key, value, hash, tag, dict_vst_get_group_index(v)+k);
+            if (NOT (t))
+                return dict_add_entry(dict, key, value, hash, tag, k);
             return -1;
         }
     }
@@ -841,9 +858,9 @@ lookup_generic(QPyDictObject *dict, Type *key, hash_t hash)
     const mm_t dup = mm_duplicate(ctag(hash));
     visit_t v = {0};
 
-    dict_for_each_cmp(v)
+    dict_for_each_probe(v)
     {
-        dict_for_each_cmp_set_ent(v, dup)
+        dict_cmp_for_each_set_ent(v, dup)
         {
             khpair_t kh = dict_vst_get_kh(v);
             int cmp = key_generic_compare(kh, key, hash);
@@ -857,6 +874,13 @@ lookup_generic(QPyDictObject *dict, Type *key, hash_t hash)
     }
     UNREACHABLE();
 }
+
+#if NO_PyAPI
+#    define dict_copy(d) dict_copy(NULL, d)
+#    define dict_copy_to(dest, d) dict_copy(dest, d) 
+#    define dict_ncopy(d) dict_ncopy(NULL, d)
+#    define dict_ncopy_to(dest, d) dict_ncopy(dest, d) 
+#endif
 
 #undef PTR
 #undef DPTR
@@ -874,11 +898,11 @@ lookup_generic(QPyDictObject *dict, Type *key, hash_t hash)
 
 #undef dict_for_each_call_method
 #undef dict_for_each_set_ent_
-#undef dict_for_each_cmp_set_ent_
+#undef dict_cmp_for_each_set_ent_
 #undef dict_for_each_
 #undef dict_for_each_mask_
-#undef dict_for_each_cmp
-#undef dict_for_each_cmp_set_ent
+#undef dict_for_each_probe
+#undef dict_cmp_for_each_set_ent
 #undef dict_for_each_mask
 #undef dict_for_each
 #undef dict_for_each_set_ent
