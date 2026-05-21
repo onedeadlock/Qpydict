@@ -87,21 +87,9 @@ typedef struct
 
 #define y8(y) y, y, y, y, y, y, y, y
 static const uint8_t
-empty_tag_full_group[NGROUP_MAX] = {
+glob_empty_tag_full_group[NGROUP_MAX] = {
     y8(EMPTY), y8(EMPTY),
     y8(EMPTY), y8(EMPTY)
 };
 #undef y8
-static const QPyDictObject
-empty_dict = {
-#if NO_PyAPI
-    0, 0,
-#endif
-    {.cache=empty_tag_full_group, 0, 0},
-#ifndef NO_PyAPI
-    0, 0, 0,
-#endif
-    0, 0, 0, 0, 0, 0
-};
-
 #endif // QPy_TYPES_H
