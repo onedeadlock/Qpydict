@@ -1,11 +1,72 @@
-#ifndef QPY_VISIT_H
-#define QPY_VISIT_H
+#ifndef QPy_VISIT_H
+#define QPy_VISIT_H
+
+/** WARNING:
+    the @visit_t and the @dict_for_each* set of macros are only for the implementation of qpydict. They are not intended for external use. For iteration, use @dict_iter* functions.
+*/
+#ifndef QPY_VISIT_STRUCT_VISIBLE
+#define QPY_VISIT_STRUCT_VISIBLE
+#endif
+#include "mm.h"
 
 /**
- * @dict_for_each_*: visit every set entry in a dict and do things within the loop body just like a `for` block. Typically, they perform `for_each_set_entries_in_groups: do {...}`
- *
- * Warning: The @dict_for_each* set of macros are defined for convenience and are not intended for any use beyond this file. For iteration, use @dict_iter* functions.
+   @visit_t: saves the state of a visited group, until the end of the block. it is undefined to access any member of the struct outside the do_for_each* block.
  */
+struct visit_t
+{
+    ssize_t  i;    // current group index
+    ssize_t  size; // aggr. group size
+    mm_t     mm;   // save each mask temporarily
+    cache_t  grp;  // current group
+    Type **  kh;   // pointer to array of key-value pairs 
+    Type **  val;  // pointer to array of values
+};
+
+
+static const visit_t
+dict_get_empty_visit_struct(void)
+{
+    static struct visit_t v = {0, .grp=0 /* TODO */};
+    return v;
+}
+
+/** @dict_for_each_set_visit_struct: set the visit struct from from dict and from first entry */
+local_inline visit_t
+dict_set_visit_struct(struct visit_t *v, const Dict *dict)
+{
+    assert(NULL != dict AND NULL != v);
+
+    v->i    = 0;
+    v->size = dict->group_capacity;
+    v->grp  = dict->entries.cache;
+    v->kh   = dict->entries.kh;
+    v->val  = dict->entries.values 
+    return *v;
+}
+
+/** @dict_for_each_set_visit_struct: set the visit struct from from dict and from n entry */
+local_inline visit_t
+dict_set_visit_struct_at_n(struct visit_t *v, const Dict *dict, const size_t n)
+{
+    // TODO: set properly
+    assert(NULL != dict AND NULL != v);
+    
+    if (n < dict->capacity)
+        *v=dict_get_empty_visit_struct(); // TODO: may affect dict_for_each_probe, set cache to empty_cache
+    v->i    = 0;
+    v->size = dict->group_capacity;
+    v->grp  = dict->entries.cache;
+    v->kh   = dict->entries.kh;
+    v->val  = dict->entries.values 
+    return *v;
+}
+
+/** @dict_for_each_set_size_hint: a hint for the number of entries to visit. */
+local_inline visit_t
+dict_visit_struct_set_size_hint(struct visit_t *v, const size_t n)
+{
+    return v->size = n; // TODO
+}
 
 /**
  * @dict_for_each_call_method: The generic call macro  with default values/functions needed for the rest of the `dict_for_each*` macros
@@ -72,7 +133,7 @@
 #define dict_for_each_set_ent(v) dict_for_each_call_meth(dict_for_each_set_ent_, v)
 #define dict_for_each_next_mask()  (___qpymask___=0)
 
-/* The below macros are to access common properties within the dict_for_each* block through the visit struct */
+/* The below macros are for direct access to the members of visit_t struct or variables defined in the dict_for_each* scope within the block */
 #define dict_vst_get_group_index(v) ((v).i)
 #define dict_vst_get_mm_group(v)    ((v).mm)
 #define dict_vst_get_index(v) (___qpyj___)
@@ -82,4 +143,4 @@
 #define dict_vst_get_hash(v)  ((v).kh[__qpyj__].hash)
 #define dict_vst_get_value(v) ((v).val[__qpyj__])
 
-#endif
+#endif // QPy_VISIT_H

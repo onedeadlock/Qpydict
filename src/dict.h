@@ -262,25 +262,6 @@ advice_size_requirement(const size_t size, const float lf)
     return get_size_noresize_trigger(size, lf);
 }
 
-local_inline int
-key_generic_compare(const khpair_t it,
-                    const Type    *key,
-                    const hash_t   hash)
-{
-    int cmp;
-
-    if (it->hash != hash)
-        return 0;
-    if (it->key == key)
-        return 1;
-
-    Py_INCREF(it->key);
-    cmp = PyObject_RichCompareBool(it->key, key, Py_EQ);
-    Py_DECREF(it->key);
-
-    return cmp;
-}
-
 local_inline void
 dict_set(Dict *dict,
          void *restrict che,
@@ -330,22 +311,22 @@ local const Dict dict_rstruct_empty(void)
 local void *dict_rstruct_offset(const char *dict)
 {
 #   ifndef NO_PyAPI
-    static const int x = offsetof(Dict, entries);
+    static const int i = offsetof(Dict, entries);
 #   else
-    static const int x = 0;
+    static const int i = 0;
 #   endif
-    return dict + x;
-#   define dict_rstruct_offset(d) dict_member_offset(char *dict((char *)(d))
+    return dict + i;
+#   define dict_rstruct_offset(d) dict_member_offset((char *)(d))
 }
 
 local_inline const int dict_rstruct_size(void)
 {
 #   ifndef NO_PyAPI
-    static const int x = sizeof(Dict) - offsetof(Dict, entries);
+    static const int i = sizeof(Dict) - offsetof(Dict, entries);
 #   else
-    static const int x = 0;
+    static const int i = sizeof(Dict);
 #   endif
-    return x;
+    return i;
 }
 
 local_inline void
@@ -354,44 +335,6 @@ dict_set_alias(const Dict * restrict dict, Dict * restrict alias)
     assert(NULL != dict);
 #define dict_alias_copy dict_set_alias
     return (void)memcpy(alias, dict, sizeof *dict);
-}
-
-locale_inline int
-dict_update_key_in_entry(Dict *dict,
-                         Type *restrict key,
-                         Type *restrict value,
-                         size_t j)
-{
-    Type *tmp = dict->entries.values[j];
-
-    dict->entries.values[j] = value;
-    Py_XDECREF(tmp);
-    Py_XDECREF(key); // key already exist
-
-    return 0;
-}
-
-locale_inline size_t
-dict_add_entry(Dict *dict,
-               Type *restrict key,
-               Type *restrict value,
-               hash_t  hash,
-               size_t tag,
-               size_t j)
-{
-    entry_t entries = dict->entries;
-
-    assert(j * NGROUP <= dict->capacity);
-    assert(NULL != entries.values[j]);
-    assert(NULL != entries.kh[j].key);
-
-    entries.cache[j]   = tag;
-    entries.values[j]  = value;
-    entries.kh[j].key  = key;
-    entries.kh[j].hash = hash;
-
-    inc_entry_size(dict);
-    return 0;
 }
 
 local_inline const size_t dict_size(const Dict *dict)
@@ -425,50 +368,27 @@ dict_load_factor(const Dict *dict)
 }
 
 local_inline int
-dict_explicit_set_load_factor(Dict *dict, float lf)
+dict_set_load_factor(Dict *dict, float lf)
 {
     assert(NULL != dict);
 
     if (out_of_range_lf(lf))
         return -1;
-
     dict->lf = lf;
-
-    /* if old_lf is greater than new_lf and size does not
-        meet the new_lf criteria, a rehash must occur on
-        the next call to a dict mutating function. */
-    dict->max_size = dict->capacity * lf;
+    dict->max_size = dict->capacity * lf; // could trigger rehash
     return 0;
 }
 
-local_inline visit_t new_visit_struct(Dict *dict)
+local_inline void dict_set_owned_memory(const Dict *dict)
 {
     assert(NULL != dict);
-
-    visit_t v = {
-        .i    = 0,
-        .size = dict->group_capacity,
-        .grp  = dict->entries.cache,
-        .kh   = dict->entries.kh,
-        .val  = dict->entries.values 
-    };
-    return v;
+    dict->flags |= 0x80;
 }
 
-local_inline visit_t new_visit_struct_from(Dict *dict, ssize_t i)
+local_inline int dict_owned_memory(const Dict *dict)
 {
     assert(NULL != dict);
-    assert(i < dict->capacity);
-
-    // TODO: set correct values
-    visit_t v = {
-        .i    = 0,
-        .size = dict->group_capacity,
-        .grp  = dict->entries.cache,
-        .kh   = dict->entries.kh,
-        .val  = dict->entries.values 
-    };
-    return v;
+    return dict->flags & 0x80;
 }
 
 local warn_unused int
@@ -480,7 +400,7 @@ dict_map(Dict *dict,
 {
     assert(NULL != dict);
 
-    visit_t v = new_visit_struct(dict);
+    struct visit_t v = dict_set_visit_struct(&v, dict);
 
     dict_for_each(v)
     {
@@ -490,11 +410,11 @@ dict_map(Dict *dict,
     return 0;
 }
 
-local_inline ssize_t
-dict_count_only_from(Dict *dict, ssize_t i)
+local_inline size_t
+dict_count_only_from(Dict *dict, size_t n)
 {
-    visit_t v = new_visit_struct_from(dict, i);
-    ssize_t j = 0;
+    size_t  j = 0;
+    struct visit_t v = dict_set_visit_struct_n(&v, dict, n);
     
     dict_for_each_mask(v)
     {
@@ -571,16 +491,16 @@ local void *dict_remove(Dict **dict)
     dict_unset(dict);
 
 #ifdef NO_PyAPI
-    if (NULL != clear) dict_map(alias, NULL, clear);
+    if (NULL != clear) dict_map(&alias, NULL, clear);
 #else
-    visit_t v = new_visit_struct(&alias);
+    struct visit_t v = dict_set_visit_struct(&v, &alias);
     dict_for_each(v)
     {
         Py_DECREF(dict_vst_get_key(v));
         Py_DECREF(dict_vst_get_value(v));
     }
 #endif
-    dict_free_ckhv_in_entry(alias);
+    dict_free_ckhv_in_entry(&alias);
 #   define dict_remove(d) dict_remove(&d)
     return NULL;
 }
@@ -591,7 +511,7 @@ dict_copy_insert_n_(Dict * restrict dest,
                     const size_t n)
 {
     size_t  i = 0; // count copied entries
-    visit_t v = new_visit_struct(src);
+    struct visit_t v = dict_set_visit_struct(&v, src);
 
     dict_for_each(v)
     {
@@ -613,7 +533,7 @@ dict_copy_insert_all_(Dict * restrict dest,
                       const Dict * restrict src,
                       const size_t n)
 {
-    visit_t v = new_visit_struct(src);
+    struct visit_t v = dict_set_visit_struct(&v, src);
 
     dict_for_each(v)
     {
@@ -701,8 +621,8 @@ dict_merge(Dict *d1,
 }
 
 warn_unused local void *
-dict_merge_nocopy(Dict *dict,
-                  Dict *d1,
+dict_merge_nocopy(Dict *d1,
+                  Dict *d2,
                   Dict **dest)
 {
     assert(NULL != d1 && NULL != d2);
@@ -716,6 +636,31 @@ dict_merge_nocopy(Dict *dict,
 
     // TODO
     return NULL;
+}
+
+local_inline int
+dict_rehash(Dict *dict, size_t n)
+{
+    Dict d = {0};
+
+    assert(0 != dict);
+    if (0 == n)
+        return dict_remove(dict);
+    if (n < dict->used_size)
+        LOG(stderr, "resize of `dict(%lu) at address %p` to `dict(%lu)` will result to loss of entries", LONG(dict->capacity), dict, LONG(n));
+
+    // copy old dict
+    if ((n < dict->max_size ? dict_ncopy(&d, dict, n) : dict_copy(&d, dict)) < 0)
+        return -1;
+    // remove dict
+    dict_remove(dict);
+    // copy to old dict
+#   ifndef NO_PyAPI
+    dict_set_alias(&d, dict);
+#   else
+    *dict = d;
+#   endif
+    return 0;
 }
 
 local int
@@ -732,31 +677,64 @@ dict_resize(Dict *dict, size_t n)
     return dict_rehash(dict, nsize);
 }
 
-local_inline int
-dict_rehash(Dict *dict, size_t n)
+locale_inline int
+dict_update_key_in_entry(Dict *dict,
+                         Type *restrict key,
+                         Type *restrict value,
+                         size_t j)
 {
-    Dict d = {0};
+    Type *tmp = dict->entries.values[j];
 
-    assert(0 != dict);
-    if (0 == n)
-        return dict_remove(dict);
-
-    if (n < dict->used_size)
-        LOG(stderr, "resize of `dict(%lu) at address %p` to `dict(%lu)` will result to loss of entries", LONG(dict->capacity), dict, LONG(n));
-
-    if ((n < dict->max_size ? dict_ncopy(&d, dict, n) : dict_copy(&d, dict)) < 0)
-        return ret;
-
-    // remove dict
-    dict_remove(dict);
-
-    // copy to old dict
-#ifndef NO_PyAPI
-    dict_set_alias(&d, dict);
-#else
-    *dict = dict_rstruct_empty();
-#endif
+    dict->entries.values[j] = value;
+#   ifndef NO_PyAPI
+    Py_XDECREF(tmp);
+    Py_XDECREF(key); // key already exist
+#   else
+    if (NULL != dict->clear)
+        dict->clear(key, tmp);
+#   endif
     return 0;
+}
+
+locale_inline size_t
+dict_add_entry(Dict *dict,
+               Type *restrict key,
+               Type *restrict value,
+               hash_t  hash,
+               size_t tag,
+               size_t j)
+{
+    entry_t entries = dict->entries;
+
+    assert(NULL == entries.values[j]);
+    assert(NULL == entries.kh[j].key);
+
+    entries.cache[j]   = tag;
+    entries.values[j]  = value;
+    entries.kh[j].key  = key;
+    entries.kh[j].hash = hash;
+
+    inc_entry_size(dict);
+    return 0;
+}
+
+local_inline int
+key_generic_compare(const khpair_t it,
+                    const Type    *key,
+                    const hash_t   hash)
+{
+    int cmp;
+
+    if (it->hash != hash)
+        return 0;
+    if (it->key == key)
+        return 1;
+
+    Py_INCREF(it->key);
+    cmp = PyObject_RichCompareBool(it->key, key, Py_EQ);
+    Py_DECREF(it->key);
+
+    return cmp;
 }
 
 //  const size_t group_idx = find_group_from_hash(hash, dict->capacity);
@@ -772,7 +750,7 @@ lookup_insert_generic_nodeleted(Dict *dict,
  
     const uint8_t tag = ctag(hash);
     const mm_t    dup = mm_duplicate(tag);
-    visit_t v = {0}; // TODO
+    struct visit_t v  = {0}; // TODO
 
     dict_for_each_probe(v)
     {
@@ -804,7 +782,7 @@ lookup_insert_generic(Dict *dict,
 
     bool    t = true; // true if k is unset
     size_t  k = 0;
-    visit_t v = {0};
+    struct visit_t v  = {0};
     const uint8_t tag = ctag(hash);
     const mm_t    dup = mm_duplicate(tag);
 
@@ -840,8 +818,8 @@ lookup_generic(Dict *dict, Type *key, hash_t hash)
     assert(NULL != dict);
     assert(NULL != key);
 
-    const mm_t dup = mm_duplicate(ctag(hash));
-    visit_t v = {0};
+    const mm_t dup   = mm_duplicate(ctag(hash));
+    struct visit_t v = {0};
 
     dict_for_each_probe(v)
     {

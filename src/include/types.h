@@ -75,16 +75,6 @@ typedef struct
     uint8_t flags; // internal use only (key kind, malloc)
 } QPyDictObject;
 
-typedef struct
-{
-    ssize_t  i;
-    ssize_t  size;
-    mm_t     mm;
-    cache_t  grp;
-    Type **  kh;
-    Type **  val;
-} visit_t;
-
 #define y8(y) y, y, y, y, y, y, y, y
 static const uint8_t
 glob_empty_tag_full_group[NGROUP_MAX] = {
