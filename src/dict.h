@@ -66,23 +66,17 @@ caligned_malloc(void *memdptr,
 {
     assert(align_size & (align_size - 1)); // ensure align_size is a power of 2 (just a rule; multiples still works)
 
-        const uint16_t max_offset = sizeof(uint16_t) + (align_size - 1);
-
+    const uint16_t max_offset = sizeof(uint16_t) + (align_size - 1);
     if (size > (SIZE_MAX - max_offset_size))
-    {
-        // `size + alignment` would cause an overflow
         return NULL;
-    }
 
     void *ptr = malloc(size + max_offset_size);
     if (NULL == ptr)
         return ptr;
-
     void *kptr = ALIGNU((uintptr_t)ptr + sizeof(uint16_t), align_size);
-
     ((uint16_t *)kptr)[-1] = (uintptr_t)kptr - (uintptr_t)ptr; // store offset size just before the aligned memory
 
-    DDPTR(memdptr) = kptr;
+    DPTR(memdptr) = kptr;
     return kptr;
 }
 
@@ -132,7 +126,7 @@ local void *caligned_realloc(void *memdptr, uint16_t align_size, size_t n)
     if (NULL == caligned_malloc(&ptr, align_size, n))
         return ptr;
 
-    DDPTR(memdptr) = memcpy(ptr, DDPTR(memdptr), n);
+    DPTR(memdptr) = memcpy(ptr, DPTR(memdptr), n);
     free(memstart);
     return ptr;
 }
@@ -142,13 +136,12 @@ cache_malloc(void *memdptr, size_t n)
 {
     void *ptr = NULL;
 
-    assert(size != 0);
-    assert(check_safe_if_safe_add(n, NGROUP));
+    assert(size != 0 AND check_if_safe_add(n, NGROUP));
 
-    n = PLUSNGRP(n);
+    n += NGROUP;
     ptr = caligned_malloc_set(n, NGROUP, EMPTY);
     if (ptr)
-        DDPTR(memdptr) = ptr;
+        DPTR(memdptr) = ptr;
     return ptr;
 }
 
@@ -157,11 +150,12 @@ cache_realloc(void *memdptr, size_t n)
 {
     void *ptr = NULL;
 
-    assert(check_if_safe_add(n, NGROUP));
-    n = PLUSNGRP(n);
+    assert(size != 0 AND check_if_safe_add(n, NGROUP));
+
+    n += NGROUP;
     if (caligned_realloc(&ptr, NGROUP, n))
     {
-        DDPTR(memdptr) = ptr;
+        DPTR(memdptr) = ptr;
         return memset(ptr+LASTGRP(n), 0, n);
     }
     return ptr;
@@ -170,34 +164,6 @@ cache_realloc(void *memdptr, size_t n)
 local_inline void cache_free(void *memptr)
 {
     return caligned_free(memptr);
-}
-
-warn_unused local_inline void *
-_malloc(void *memdptr, size_t size)
-{
-    void *ptr = NULL;
-
-    assert(size != 0);
-
-#ifndef NDEBUG
-    ptr = calloc(1, size);
-#else
-    ptr = malloc(size);
-#endif
-
-    DDPTR(memdptr) = ptr;
-    return ptr;
-}
-
-warn_unused local_inline void *
-_realloc(void *memdptr, size_t size)
-{
-    return realloc(DDPTR(memdptr), NGROUP, size);
-}
-
-local_inline void _free(void *ptr)
-{
-    return free(ptr);
 }
 
 local_inline size_t next_power_of_two(size_t n)
@@ -240,18 +206,11 @@ try_size_requirement(const size_t size,
 {
     assert(size != 0);
 
-    size_t try_size = get_size_no_resize_trigger(size, lf);
+    size_t ts = get_size_no_resize_trigger(size, lf);
 
-    if (check_if_safe_mul(try_size, max_object_size, (size_t)0))
-    {
-        // size would overflow
-#if USE_EXACT_SIZE
-        return 0;
-#else
-        return new_power_of_two(size); // object may trigger an early resize
-#endif
-    }
-    return try_size;
+    if (check_if_safe_mul(ts, max_object_size, (size_t)0))
+        return ts;
+    return 0;
 }
 
 local_inline size_t
@@ -262,64 +221,23 @@ advice_size_requirement(const size_t size, const float lf)
     return get_size_noresize_trigger(size, lf);
 }
 
-local_inline void
-dict_set(Dict *dict,
-         void *restrict che,
-         void *restrict val,
-         void *restrict kh,
-         size_t cap,
-         size_t size,
-         float lf,
-         uint8_t flag)
+local_inline const Dict *dict_struct_empty(void)
 {
-    assert(NULL != dict);
-
-    dict->entries.kh     = kh;
-    dict->entries.values = val;
-    dict->entries.cache  = che;
-    dict->flag           = flag;
-    dict_set_new_capacity_(dict, cap, size, lf);
+    static const Dict d = {.entries.cache=LOCAL_empty_tag_full_group};
+    return &d;
 }
 
-local_inline void
-dict_set_new_capacity_(Dict *dict,
-                      size_t cap,
-                      size_t size,
-                      float   lf)
-{
-    dict->capacity       = cap;
-    dict->group_capacity = ALIGN(cap / NGROUP);
-    dict->max_size       = (lf * cap) + 0.5;
-    dict->used_size      = size;
-    dict->lf             = lf;
-}
-
-local_inline void dict_unset(Dict **dict)
-{
-    assert(NULL != dict);
-    *dict = empty_dict;
-}
-
-local const Dict dict_rstruct_empty(void)
-{
-    static Dict empty_dict = {0};
-
-    empty_dict.entries.cache = glob_empty_tag_full_group;
-    return empty_dict;
-}
-
-local void *dict_rstruct_offset(const char *dict)
+local const int dict_struct_offset(void)
 {
 #   ifndef NO_PyAPI
     static const int i = offsetof(Dict, entries);
 #   else
     static const int i = 0;
 #   endif
-    return dict + i;
-#   define dict_rstruct_offset(d) dict_member_offset((char *)(d))
+    return i;
 }
 
-local_inline const int dict_rstruct_size(void)
+local_inline const int dict_struct_size(void)
 {
 #   ifndef NO_PyAPI
     static const int i = sizeof(Dict) - offsetof(Dict, entries);
@@ -330,11 +248,13 @@ local_inline const int dict_rstruct_size(void)
 }
 
 local_inline void
-dict_set_alias(const Dict * restrict dict, Dict * restrict alias)
+dict_setcap(Dict *dict, size_t cap, size_t size, float lf)
 {
-    assert(NULL != dict);
-#define dict_alias_copy dict_set_alias
-    return (void)memcpy(alias, dict, sizeof *dict);
+    dict->capacity       = cap;
+    dict->group_capacity = ALIGN(cap / NGROUP);
+    dict->max_size       = (lf * cap) + 0.5;
+    dict->used_size      = size;
+    dict->lf             = lf;
 }
 
 local_inline const size_t dict_size(const Dict *dict)
@@ -362,13 +282,13 @@ local_inline int dict_isunused(const Dict *dict)
 }
 
 local_inline const float
-dict_load_factor(const Dict *dict)
+dict_load_fact(const Dict *dict)
 {
     return dict->lf;
 }
 
 local_inline int
-dict_set_load_factor(Dict *dict, float lf)
+dict_set_load_fact(Dict *dict, float lf)
 {
     assert(NULL != dict);
 
@@ -424,14 +344,41 @@ dict_count_only_from(Dict *dict, size_t n)
     return j;
 }
 
+warn_unused local_inline void *
+dict_malloc(void *memdptr, size_t size)
+{
+    void *ptr = NULL;
+
+    assert(size != 0);
+
+#ifndef NDEBUG
+    ptr = calloc(size, 1);
+#else
+    ptr = malloc(size);
+#endif
+    if (ptr) DPTR(memdptr) = ptr;
+    return ptr;
+}
+
+warn_unused local_inline void *
+dict_realloc(void *memdptr, size_t size)
+{
+    return realloc(DPTR(memdptr), NGROUP, size);
+}
+
+local_inline void dict_free(void *ptr)
+{
+    return free(ptr);
+}
+
 local_inline int dict_malloc_ckhv(void restrict **c,
                                   void restrict **v,
                                   void restrict **kh)
 {
     if (NOT cache_malloc(c, n))
         return -1;
-    if (_malloc(&v, n * sizeof(Type *)) AND
-        _malloc(&kh, n * sizeof(khpair_t)))
+    if (dict_malloc(&v, n * sizeof(Type *)) AND
+        dict_malloc(&kh, n * sizeof(khpair_t)))
         return 0;
     dict_free_ckhv(*c, *v, *kh);
 #   define dict_malloc_ckhv(c, v, kh) dict_malloc_ckhv(void*)c, (void*)v, (void*)kh)
@@ -442,7 +389,7 @@ local_inline void dict_free_ckhv(void * restrict c,
                                  void * restrict v,
                                  void * restrict kh)
 {
-    return calloc_free(c), _free(v), _free(kh);
+    return calloc_free(c), dict_free(v), dict_free(kh);
 }
 
 local_inline void dict_free_ckhv_in_entry(Dict *dict)
@@ -453,13 +400,13 @@ local_inline void dict_free_ckhv_in_entry(Dict *dict)
 }
 
 local int
-dict_malloc_int(Dict **dict,
+dict_set(Dict **dict,
                 size_t n,
                 float  lf)
 {
-    void *kh, *v, *c;
-    
     assert(NULL != dict AND NULL != *dict);
+    entry_t e = (*dict)->entry;
+    void *kh  = e.kh, *v = e.values, *c = e.cache; 
 
     if (out_of_range_lf(lf))
         return -1;
@@ -471,9 +418,51 @@ dict_malloc_int(Dict **dict,
         return -1;
     if (dict_malloc_ckhv(&c, &v, &kh))
         return -1;
-    dict_set(*dict, c, v, kh, n, 0, lf);
+    dict_setcap(*dict, n, 0, lf);
 
     return n;
+}
+
+local_inline void dict_unset(Dict **dict)
+{
+    assert(NULL != dict);
+#   ifndef NO_PyAPI
+    const int offset = dict_struct_offset();
+    memcpy(*dict+i, dict_empty_struct()+i, dict_struct_size());
+#   else
+    *dict = (Dict *)dict_empty_struct();
+    #endif
+}
+
+local_inline void
+dict_set_alias(const Dict * restrict dict, Dict * restrict alias)
+{
+    assert(NULL != dict AND NULL != alias);
+#define dict_alias_copy dict_set_alias
+    return (void)memcpy(alias, dict, sizeof(Dict));
+}
+
+warn_unused local void *
+dict_new(Dict **dict, ssize_t n, float lf)
+{
+
+    if (NULL == dict OR NULL == *dict)
+    {
+#     ifndef NO_PyAPI
+        return dict;
+        UNREACHABLE();
+#     endif
+        if (NULL == (*dict=dict_malloc(sizeof(Dict))))
+            return *dict;
+        dict_set_owned_memory(*dict);
+    }
+    if (dict_set(dict, n, lf) < 0)
+    {
+        if (dict_owned_memory(*dict))
+            dict_free(*dict), *dict=NULL;
+        return NULL;
+    }
+    return *dict;
 }
 
 local void *dict_remove(Dict **dict)
@@ -486,8 +475,8 @@ local void *dict_remove(Dict **dict)
 #endif
 
     dict_alias_copy(*dict, &alias);
-    if (dict_owned_memory(*dict)) // TODO
-        _free(*dict);
+    if (dict_owned_memory(*dict))
+        dict_free(*dict);
     dict_unset(dict);
 
 #ifdef NO_PyAPI
@@ -553,20 +542,13 @@ dict_copy(Dict * restrict dest,
 {
     assert(NULL != src);
     if (dict_isempty(src))
-        return NULL;
-#   if NO_PyAPI
-    if (NULL == dest)
-    {
-        if (NULL == (dest=_malloc(sizeof *src)))
-            return dest;
-        dict_set_owned_memory(dest); // TODO
-    }
-#   endif
-    
-    if (dict_malloc_int(dest, dict_size(src), dict_load_factor(src)) < 0)
-        return NULL;
+        return dict_empty_struct();
 
-    return dict_copy_insert_all_(dest, src);
+    Dict *d = dict_new(&dest, dict_size(src), dict_load_fact(src));
+
+    if (NULL == d)
+        return dict_copy_insert_all_(d, src);
+    return d;
 }
 
 warn_unused local void *
@@ -576,19 +558,13 @@ dict_ncopy(Dict * restrict dest,
 {
     assert(NULL != src);
     if (dict_isempty(src))
-        return NULL;
-#   if NO_PyAPI
-    if (NULL == dest)
-    {
-        if (NULL == (dest=_malloc(sizeof *src)))
-            return dest;
-        dict_set_owned_memory(dest);
-    }
-#   endif
+        return dict_empty_struct();
 
-    if (dict_malloc_int(dest, n, dict_load_factor(src)) < 0)
-        return NULL;
-    return dict_copy_insert_n_(dest, src, n);
+    Dict *d = dict_new(&dest, n, dict_load_fact(src));
+
+    if (NULL == d)
+        return dict_copy_insert_n_(d, src, n);
+    return d;
 }
 
 local void *dict_clone(Dict *dict)
@@ -608,7 +584,6 @@ dict_merge(Dict *d1,
 {
     assert(NULL != d1 && NULL != d2);
 
-    
     if (d1 == d2)
         return dict_copy(*dest, d1);
     if (NOT dict_isempty(d1) AND dict_isempty(d2))
@@ -616,8 +591,10 @@ dict_merge(Dict *d1,
     if (dict_isempty(d1) AND NOT dict_isempty(d2))
         return dict_copy(*dest, d2);
 
-    // TODO:
-    return NULL;
+    Dict *d = dict_new(dest, dict_size(d1) + dict_size(d2), dict_load_fact(d1)); // TODO: overflow
+    if (NULL == d)
+        return d;
+    return dict_copy(dict_copy(d, d1), d2);
 }
 
 warn_unused local void *
@@ -628,14 +605,16 @@ dict_merge_nocopy(Dict *d1,
     assert(NULL != d1 && NULL != d2);
 
     if (d1 == d2)
-        return dict_copy(*dest, d1);
+        return d1;
     if (NOT dict_isempty(d1) AND dict_isempty(d2))
         return dict_copy(*dest, d1);
     if (dict_isempty(d1) AND NOT dict_isempty(d2))
         return dict_copy(*dest, d2);
-
-    // TODO
-    return NULL;
+    
+    Dict *d = dict_new(dest, dict_size(d1) + dict_size(d2), dict_load_fact(d1)); // TODO: overflow
+    if (NULL == d)
+        return d;
+    return dict_copy(dict_copy(d, d1), d2);
 }
 
 local_inline int

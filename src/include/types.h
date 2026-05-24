@@ -77,7 +77,7 @@ typedef struct
 
 #define y8(y) y, y, y, y, y, y, y, y
 static const uint8_t
-glob_empty_tag_full_group[NGROUP_MAX] = {
+LOCAL_empty_tag_full_group[NGROUP_MAX] = {
     y8(EMPTY), y8(EMPTY),
     y8(EMPTY), y8(EMPTY)
 };
