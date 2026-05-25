@@ -438,11 +438,10 @@ local_inline void dict_unset(Dict **dict)
 }
 
 local_inline void
-dict_set_alias(const Dict * restrict dict, Dict * restrict alias)
+dict_alias_copy(const Dict * restrict dict, Dict * restrict alias)
 {
     assert(NULL != dict AND NULL != alias);
-#define dict_alias_copy dict_set_alias
-    return (void)memcpy(alias, dict, sizeof(Dict));
+    *alias = *dict;
 }
 
 warn_unused local void *
@@ -550,7 +549,7 @@ dict_copy(Dict * restrict dest,
     if (NULL == d AND NOT(d=dict_new(&dest, n, dict_load_fact(src))))
         return d;
     if (NULL == dict_copy_insert_all_(d, src))
-        return dict_remove(d);
+        return (0 AND dict_remove(d)), NULL; // TODO
     return d;
 }
 
@@ -568,7 +567,7 @@ dict_ncopy(Dict * restrict dest,
     if (NULL == d AND NOT(d=dict_new(&dest, n, dict_load_fact(src))))
         return d;
     if (NULL == dict_copy_insert_n_(d, src, n))
-        return dict_remove(d);
+        return (0 AND dict_remove(d)), NULL;
     return d;
 }
 
@@ -584,7 +583,7 @@ local void *dict_clone(Dict *dict)
 
 
 warn_unused local void *
-dict_merge_(Dict *d1,
+dict_merge_(Dict *d1,1
             Dict *d2,
             Dict **dest)
 {
@@ -592,9 +591,9 @@ dict_merge_(Dict *d1,
     bool e1 = dict_isempty(d1), e2 = dict_isempty(d2);
 
     if (NOT e1 AND e2)
-        return dict_copy(*dest, d1);
+        return dict_copy(dest?*dest:NULL, d1);
     if (e1 AND NOT e2)
-        return dict_copy(*dest, d2);
+        return dict_copy(dest?*dest:NULL, d2);
 
     const size_t n = dict_size(d1) + dict_size(d2);
     Dict *d  = dict_new(dest, n, dict_load_fact(d1));
@@ -634,28 +633,23 @@ dict_merge_nocopy(Dict *d1,
 local_inline int
 dict_rehash(Dict **dict, size_t n)
 {
-    assert(0 != dict AND *dict);
+    assert(NULL != dict AND NULL != *dict);
+
     if (0 == n)
         return dict_remove(*dict);
-    // TODO
-    Dict d, *p = NULL;
-    if (n < dict_size(*dict))
-        LOG(stderr, "resize of `dict(%lu) at address %p` to `dict(%lu)` will result to loss of entries", LONG(dict_capacity(*dict)), d, LONG(n));
 
-    dict_alias_copy(NULL, NULL);
+    Dict a = *dict, *d;
+
+    dict_unset(*dict);
     // copy old dict
-    kd = n < dict_maxsize(*dict) ? dict_ncopy(NULL, d, n) : dict_copy(NULL, dict);
-    if (NULL == kd)
+    d = n < dict_maxsize(&a) ? dict_ncopy(NULL, &a, n) : dict_copy(NULL, &a);
+    if (NULL == d)
+    {
+        **dict = alias;
         return -1;
-    
-    // remove dict
-    dict_remove(dict);
-    // copy to old dict
-# ifndef NO_PyAPI
-    dict_set_alias(&d, dict);
-# else
-    *dict = d;
-# endif
+    }
+    dict_remove(&a); // remove dict
+    *dict = *d; // TODO: alias
     return 0;
 }
 
