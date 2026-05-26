@@ -223,9 +223,26 @@ advice_size_requirement(const size_t size, const float lf)
     return get_size_noresize_trigger(size, lf);
 }
 
+
+local_inline const void *dict_key_empty(void)
+{
+    static const khpair_t kh = {NULL, 0};
+    return &kh + sizeof kh; // [-1] = kh
+}
+
+local_inline const void *dict_value_empty(void)
+{
+    static const Type *v = NULL;
+    return &v + sizeof v; // [-1] = v
+}
+
 local_inline const Dict *dict_struct_empty(void)
 {
-    static const Dict d = {.entries.cache=LOCAL_empty_tag_full_group};
+    static const Dict d = {
+        .entries.cache  = LOCAL_empty_tag_full_group,
+        .entries.kh     = dict_key_empty(),
+        .enteies.values = dict_values_empty();
+    };
     return &d;
 }
 
@@ -353,13 +370,13 @@ dict_malloc(void *memdptr, size_t size)
     void *ptr = NULL;
 
     assert(size != 0);
-
-#ifdef NDEBUG
+#ifndef NDEBUG
     ptr = calloc(size, 1);
 #else
     ptr = malloc(size);
 #endif
-    if (ptr) DPTR(memdptr) = ptr;
+    if (NULL != ptr)
+        DPTR(memdptr) = ptr;
     return ptr;
 }
 
@@ -372,6 +389,37 @@ dict_realloc(void *memdptr, size_t size)
 local_inline void dict_free(void *ptr)
 {
     return free(ptr);
+}
+
+local_inline void *dict_malloc_self_(void **self, size_t UNUSED(n))
+{
+    Dict *dict = NULL;
+# ifndef NO_PyAPI
+    dict = (Dict *)PyType_GenericAlloc(*self, 0); // TODO
+# else
+    dict = dict_malloc(self, sizeof(Dict));
+# endif
+    return dict;
+}
+
+local_inline void *dict_free_self_(void **self)
+{
+    assert(NULL != self);
+    Dict *dict = *self;
+
+    // TODO
+    if (NULL == dict)
+        return dict;
+    if (dict_owned_memory(dict))
+    {
+#     ifndef NO_PyAPI
+        LOG("dict_free_self_: implement me!");
+        exit(1);
+#     endif
+        dict_free(dict);
+    }
+    dict_unset(&dict);
+    return NULL;
 }
 
 local_inline int dict_malloc_ckhv(void restrict **c,
@@ -423,7 +471,7 @@ dict_set(Dict **dict,
         return -1;
     dict_setcap(*dict, n, 0, lf);
 
-    return n;
+    return 0;
 }
 
 local_inline void dict_unset(Dict **dict)
@@ -445,25 +493,19 @@ dict_alias_copy(const Dict * restrict dict, Dict * restrict alias)
 }
 
 warn_unused local void *
-dict_new(Dict **dict, ssize_t n, float lf)
+dict_new(void **type, ssize_t n, float lf)
 {
-    if (NULL == dict OR NULL == *dict)
-    {
-#     ifndef NO_PyAPI
-        return NULL;
-        UNREACHABLE();
-#     endif
-        if (NULL == (*dict=dict_malloc(sizeof(Dict))))
-            return *dict;
-        dict_set_owned_memory(*dict);
-    }
-    if (dict_set(dict, n, lf) < 0)
-    {
-        if (dict_owned_memory(*dict))
-            dict_free(*dict), *dict=NULL;
-        return NULL;
-    }
-    return *dict;
+    Dict *dict = NULL;
+
+    dict = dict_malloc_self_(type, 0);
+    if (NULL == dict)
+         return dict;
+    if (dict_set(&dict, n, lf) != 0)
+        return dict_free(dict);
+# ifdef NO_PyAPI
+    dict AND (*type=dict);
+# endif
+    return d;
 }
 
 local void *dict_remove(Dict **dict)
@@ -475,10 +517,7 @@ local void *dict_remove(Dict **dict)
     clearfunc_t clear = (*dict)->clear;
 # endif
     dict_alias_copy(*dict, &alias);
-    if (dict_owned_memory(*dict))
-        dict_free(*dict);
-    dict_unset(dict);
-    
+    dict_free_self_(dict); // TODO
 # ifdef NO_PyAPI
     if (NULL != clear) dict_map(&alias, NULL, clear);
 # else
