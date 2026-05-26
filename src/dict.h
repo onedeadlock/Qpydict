@@ -248,21 +248,21 @@ local_inline const Dict *dict_struct_empty(void)
 
 local const int dict_struct_offset(void)
 {
-#   ifndef NO_PyAPI
+#  ifndef NO_PyAPI
     static const int i = offsetof(Dict, entries);
-#   else
+#  else
     static const int i = 0;
-#   endif
+#  endif
     return i;
 }
 
 local_inline const int dict_struct_size(void)
 {
-#   ifndef NO_PyAPI
+#  ifndef NO_PyAPI
     static const int i = sizeof(Dict) - offsetof(Dict, entries);
-#   else
+#  else
     static const int i = sizeof(Dict);
-#   endif
+#  endif
     return i;
 }
 
@@ -271,7 +271,7 @@ dict_setcap(Dict *dict, size_t cap, size_t size, float lf)
 {
     dict->capacity       = cap;
     dict->group_capacity = ALIGN(cap / NGROUP);
-    dict->max_size       = (lf * cap) + 0.5;
+    dict->max_size       = (lf * cap);
     dict->used_size      = size;
     dict->lf             = lf;
 }
@@ -355,7 +355,7 @@ dict_count_only_from(Dict *dict, size_t n)
 {
     size_t  j = 0;
     struct visit_t v = dict_set_visit_struct_n(&v, dict, n);
-    
+
     dict_for_each_mask(v)
     {
         j += POPCNT(dict_vst_get_mask(v));
@@ -365,61 +365,98 @@ dict_count_only_from(Dict *dict, size_t n)
 }
 
 warn_unused local_inline void *
-dict_malloc(void *memdptr, size_t size)
+dict_malloc(void **dp, size_t n)
 {
     void *ptr = NULL;
 
-    assert(size != 0);
-#ifndef NDEBUG
-    ptr = calloc(size, 1);
+    assert(0 != n);
+
+#if defined(NDEBUG) AND NOT defined(NO_PyAPI)
+    ptr = PyMem_Malloc(n);
+
+#  elif NOT defined(NO_PyAPI)
+    ptr = PyMem_Calloc(n, 1);
+
+#  elif defined(NDEBUG)
+    ptr = malloc(n);
+// NDEBUG AND NO_PyAPI
 #else
-    ptr = malloc(size);
+    ptr = calloc(n, sizeof(uint8_t));
 #endif
-    if (NULL != ptr)
-        DPTR(memdptr) = ptr;
+
+    if (NULL != ptr AND NULL != dp)
+        *dp = ptr;
     return ptr;
+    //
+#   define dict_malloc(d, s) dict_malloc((void *)(d), (s))
 }
 
 warn_unused local_inline void *
-dict_realloc(void *memdptr, size_t size)
+dict_realloc(void **dp, size_t n)
 {
-    return realloc(DPTR(memdptr), NGROUP, size);
+    void *ptr = NULL;
+
+    assert(NULL != dp);
+
+#  ifndef NO_PyAPI
+    ptr = PyMem_Realloc(*dp, n);
+#  else
+    ptr = realloc(*dp, n);
+#  endif
+
+    NULL != ptr AND (*dp=ptr);
+    return ptr;
+    //
+#   define dict_realloc(d, n) dict_realloc((void *)(d), (n))
 }
 
 local_inline void dict_free(void *ptr)
 {
-    return free(ptr);
+#  ifndef NO_PyAPI
+    ptr = PyMem_Free(ptr);
+#  else
+    ptr = free(ptr);
+#  endif
 }
 
 local_inline void *dict_malloc_self_(void **self, size_t UNUSED(n))
 {
     Dict *dict = NULL;
-# ifndef NO_PyAPI
-    dict = (Dict *)PyType_GenericAlloc(*self, 0); // TODO
-# else
+
+#  ifndef NO_PyAPI
+    assert(NULL != self AND NULL != *self);
+    dict = (Dict *)(Py_TYPE(*self)->tp_alloc(*self, 0));
+#  else
     dict = dict_malloc(self, sizeof(Dict));
-# endif
+#  endif
+
+    dict_set_owned_memory(dict);
     return dict;
+    //
+#   define dict_malloc_self_(s, n) dict_malloc_self_((void *)(s), (n))
 }
 
 local_inline void *dict_free_self_(void **self)
 {
     assert(NULL != self);
+
     Dict *dict = *self;
 
-    // TODO
     if (NULL == dict)
         return dict;
-    if (dict_owned_memory(dict))
-    {
-#     ifndef NO_PyAPI
-        LOG("dict_free_self_: implement me!");
-        exit(1);
-#     endif
-        dict_free(dict);
-    }
-    dict_unset(&dict);
+    if (NOT dict_owned_memory(dict))
+        return NULL;
+
+#  ifndef NO_PyAPI
+    Py_TYPE(dict)->tp_free(dict);
+#  else
+    dict_free(dict);
+#  endif
+
+    dict_unset(*self);
     return NULL;
+    //
+#   define dict_free_self_(s) dict_free_self_((void *)(s))
 }
 
 local_inline int dict_malloc_ckhv(void restrict **c,
@@ -428,19 +465,33 @@ local_inline int dict_malloc_ckhv(void restrict **c,
 {
     if (NOT cache_malloc(c, n))
         return -1;
-    if (dict_malloc(&v, n * sizeof(Type *)) AND
-        dict_malloc(&kh, n * sizeof(khpair_t)))
+    if (dict_malloc(v, n * sizeof(Type *)) AND
+        dict_malloc(kh, n * sizeof(khpair_t)))
+    {
+        // store dummy key and value before entries so that (key|value)[-1] returns it (in the case of error) 
+        *(Type **)(*v)    = *(Type *)dict_value_empty();
+        *(khpair_t *)(*v) = *(khpair_t *)(dict_key_empty());
+        // move ahead of dummy key and value
+        *v = (Type *)(*v) + 1;
+        *kh = (khpair_t *)(*kh) + 1;
         return 0;
+    }
     dict_free_ckhv(*c, *v, *kh);
-#   define dict_malloc_ckhv(c, v, kh) dict_malloc_ckhv(void*)c, (void*)v, (void*)kh)
     return -1;
+    //
+#   define dict_malloc_ckhv(c, v, kh) dict_malloc_ckhv(void*)c, (void*)v, (void*)kh)
 }
 
 local_inline void dict_free_ckhv(void * restrict c,
                                  void * restrict v,
                                  void * restrict kh)
 {
-    return calloc_free(c), dict_free(v), dict_free(kh);
+    // TODO:  ensure not to attempt a free on static object
+    calloc_free(c);
+    if (NULL != v)
+        dict_free((Type **)(v) - 1);
+    if (NULL != kh)
+        dict_free((khpair_t *)(kh) - 1);
 }
 
 local_inline void dict_free_ckhv_in_entry(Dict *dict)
@@ -457,7 +508,7 @@ dict_set(Dict **dict,
 {
     assert(NULL != dict AND NULL != *dict);
     entry_t e = (*dict)->entries;
-    void *kh  = e.kh, *v = e.values, *c = e.cache; 
+    void *kh  = e.kh, *v = e.values, *c = e.cache;
 
     if (out_of_range_lf(lf))
         return -1;
@@ -613,7 +664,7 @@ dict_ncopy(Dict * restrict dest,
 local void *dict_clone(Dict *dict)
 {
     assert(NULL != dict);
-    
+
     if (dict_isempty(dict))
         return empty_dict;
     // TODO
@@ -776,7 +827,7 @@ lookup_insert_generic_nodeleted(Dict *dict,
 {
     assert(NULL != dict);
     assert(NULL != key);
- 
+
     const uint8_t tag = ctag(hash);
     const mm_t    dup = mm_duplicate(tag);
     struct visit_t v  = {0}; // TODO
@@ -792,7 +843,7 @@ lookup_insert_generic_nodeleted(Dict *dict,
             if (cmp)
                 return dict_update_key_in_entry(dict, key, value, dict_vst_get_index());
         }
-        
+
         mask_t mask = mm_test_empty(dict_vst_get_mm_group(v));
         if (LIKELY(mask))
             return dict_add_entry(dict, key, value, hash, tag, mm_scan_mask(mask));
@@ -869,9 +920,9 @@ lookup_generic(Dict *dict, Type *key, hash_t hash)
 
 #if NO_PyAPI
 #    define dict_copy(d) dict_copy(NULL, d)
-#    define dict_copy_to(dest, d) dict_copy(dest, d) 
+#    define dict_copy_to(dest, d) dict_copy(dest, d)
 #    define dict_ncopy(d) dict_ncopy(NULL, d)
-#    define dict_ncopy_to(dest, d) dict_ncopy(dest, d) 
+#    define dict_ncopy_to(dest, d) dict_ncopy(dest, d)
 #endif
 
 // remove all macro definitions
