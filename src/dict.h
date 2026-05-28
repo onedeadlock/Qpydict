@@ -282,6 +282,12 @@ local_inline const size_t dict_size(const Dict *dict)
     return dict->used_size;
 }
 
+local_inline const size_t dict_maxsize(const Dict *dict)
+{
+    assert(NULL != dict);
+    return dict->max_size;
+}
+
 local_inline const size_t dict_capacity(const Dict *dict)
 {
     assert(NULL != dict);
@@ -331,41 +337,10 @@ local_inline int dict_owned_memory(const Dict *dict)
     return dict->flags & 0x80;
 }
 
-local warn_unused int
-dict_map(Dict *dict,
-         const void    *arg,
-         int  (do_func *)(const Type *key,
-                          const Type *val,
-                          void *arg))
-{
-    assert(NULL != dict);
-
-    struct visit_t v = dict_set_visit_struct(&v, dict);
-
-    dict_for_each(v)
-    {
-        if (do_func(dict_vst_get_key(v), dict_vst_get_value(v), arg) < 0)
-            return -1;
-    }
-    return 0;
-}
-
-local_inline size_t
-dict_count_only_from(Dict *dict, size_t n)
-{
-    size_t  j = 0;
-    struct visit_t v = dict_set_visit_struct_n(&v, dict, n);
-
-    dict_for_each_mask(v)
-    {
-        j += POPCNT(dict_vst_get_mask(v));
-        dict_for_each_next_mask(v);
-    }
-    return j;
-}
+#define DKTO_PTR(p, d) (((p) AND (d) AND (DPTR(d)=(p))), (p))
 
 warn_unused local_inline void *
-dict_malloc(void **dp, size_t n)
+dict_malloc(void *dp, size_t n)
 {
     void *ptr = NULL;
 
@@ -375,40 +350,32 @@ dict_malloc(void **dp, size_t n)
     ptr = PyMem_Malloc(n);
 
 #  elif NOT defined(NO_PyAPI)
-    ptr = PyMem_Calloc(n, 1);
+    ptr = PyMem_Calloc(n, sizeof(char));
 
 #  elif defined(NDEBUG)
     ptr = malloc(n);
 // NDEBUG AND NO_PyAPI
 #else
-    ptr = calloc(n, sizeof(uint8_t));
+    ptr = calloc(n, sizeof(char));
 #endif
-
-    if (NULL != ptr AND NULL != dp)
-        *dp = ptr;
-    return ptr;
-    //
-#   define dict_malloc(d, s) dict_malloc((void *)(d), (s))
+    return DKTO_PTR(ptr, dp);
 }
 
 warn_unused local_inline void *
-dict_realloc(void **dp, size_t n)
+dict_realloc(void *dp, size_t n)
 {
     void *ptr = NULL;
 
-    assert(NULL != dp);
+    assert(NULL != dp AND 0 != n);
 
 #  ifndef NO_PyAPI
-    ptr = PyMem_Realloc(*dp, n);
+    ptr = PyMem_Realloc(DPTR(dp), n);
 #  else
-    ptr = realloc(*dp, n);
+    ptr = realloc(DPTR(dp), n);
 #  endif
-
-    NULL != ptr AND (*dp=ptr);
-    return ptr;
-    //
-#   define dict_realloc(d, n) dict_realloc((void *)(d), (n))
+    return DKTO_PTR(ptr, dp);
 }
+#undef DKTO_PTR
 
 local_inline void dict_free(void *ptr)
 {
@@ -419,74 +386,65 @@ local_inline void dict_free(void *ptr)
 #  endif
 }
 
-local_inline void *dict_malloc_self_(void **self, size_t UNUSED(n))
+local_inline void *dict_malloc_self_(void *type, size_t UNUSED(n))
 {
-    Dict *dict = NULL;
+    Dict *self = NULL;
 
 #  ifndef NO_PyAPI
-    assert(NULL != self AND NULL != *self);
-    dict = (Dict *)(Py_TYPE(*self)->tp_alloc(*self, 0));
+    assert(NULL != type);
+    self = (Dict *)(Py_TYPE(type)->tp_alloc(type, 0));
 #  else
-    dict = dict_malloc(self, sizeof(Dict));
+    self = self_malloc(sizeof(Dict));
 #  endif
 
-    dict_set_owned_memory(dict);
-    return dict;
-    //
-#   define dict_malloc_self_(s, n) dict_malloc_self_((void *)(s), (n))
+    if (NULL != self)
+        dict_set_owned_memory(self);
+    return self;
 }
 
-local_inline void *dict_free_self_(void **self)
+local_inline void *dict_free_self_(void *dp)
 {
-    assert(NULL != self);
-
-    Dict *dict = *self;
-
-    if (NULL == dict)
-        return dict;
-    if (NOT dict_owned_memory(dict))
+    if (NULL == dp)
+        return dp;
+    Dict *self = *(Dict **)dp;
+    if (NULL == self OR NOT dict_owned_memory(self))
         return NULL;
 
 #  ifndef NO_PyAPI
-    Py_TYPE(dict)->tp_free(dict);
+    Py_TYPE(self)->tp_free(self);
 #  else
-    dict_free(dict);
+    dict_free(self);
 #  endif
 
-    dict_unset(*self);
+    dict_unset(dp);
     return NULL;
-    //
-#   define dict_free_self_(s) dict_free_self_((void *)(s))
 }
 
-local_inline int dict_malloc_ckhv(void restrict **c,
-                                  void restrict **v,
-                                  void restrict **kh)
+local_inline int dict_malloc_ckhv(cache_t  **c,
+                                  Type     **v,
+                                  khpair_t **kh)
 {
     if (NOT cache_malloc(c, n))
         return -1;
-    if (dict_malloc(v, n * sizeof(Type *)) AND
+    if (dict_malloc(v,  n * sizeof(Type *)) AND
         dict_malloc(kh, n * sizeof(khpair_t)))
     {
         // store dummy key and value before entries so that (key|value)[-1] returns it (in the case of error) 
-        *(Type **)(*v)    = *(Type *)dict_value_empty();
-        *(khpair_t *)(*v) = *(khpair_t *)(dict_key_empty());
+        **v  = *(Type *)dict_value_empty();
+        **kh = *(khpair_t *)dict_key_empty();
         // move ahead of dummy key and value
-        *v = (Type *)(*v) + 1;
-        *kh = (khpair_t *)(*kh) + 1;
+        *v  += 1;
+        *kh += 1;
         return 0;
     }
     dict_free_ckhv(*c, *v, *kh);
     return -1;
-    //
-#   define dict_malloc_ckhv(c, v, kh) dict_malloc_ckhv(void*)c, (void*)v, (void*)kh)
 }
 
 local_inline void dict_free_ckhv(void * restrict c,
                                  void * restrict v,
                                  void * restrict kh)
 {
-    // TODO:  ensure not to attempt a free on static object
     calloc_free(c);
     if (NULL != v)
         dict_free((Type **)(v) - 1);
@@ -494,11 +452,16 @@ local_inline void dict_free_ckhv(void * restrict c,
         dict_free((khpair_t *)(kh) - 1);
 }
 
+#define DICT_ENT(d) (&(d->entries))
+
 local_inline void dict_free_ckhv_in_entry(Dict *dict)
 {
     assert(NULL != dict);
-    entry_t e = dict->entries;
-    return dict_free_ckhv(e.cache, e.values, e.kh);
+    if (0 != dict_owned_memory(dict))
+        return;
+    entry_t *e = DICT_ENT(dict);
+
+    return dict_free_ckhv(e->cache, e->values, e->kh);
 }
 
 local int
@@ -507,8 +470,10 @@ dict_set(Dict **dict,
                 float  lf)
 {
     assert(NULL != dict AND NULL != *dict);
-    entry_t e = (*dict)->entries;
-    void *kh  = e.kh, *v = e.values, *c = e.cache;
+    assert(0 != dict_owned_memory(*dict));
+
+    entry_t *e = DICT_ENT(*dict);
+    void   *kh = &(e->kh), *v = &(e->values), *c = &(e->cache);
 
     if (out_of_range_lf(lf))
         return -1;
@@ -518,22 +483,19 @@ dict_set(Dict **dict,
     n = try_size_requirement(n, sizeof(khpair_t), lf);
     if (0 == n)
         return -1;
-    if (dict_malloc_ckhv(&c, &v, &kh))
+    if (dict_malloc_ckhv(c, v, kh))
         return -1;
     dict_setcap(*dict, n, 0, lf);
 
     return 0;
 }
+#undef DICT_ENT
 
 local_inline void dict_unset(Dict **dict)
 {
     assert(NULL != dict);
-# ifndef NO_PyAPI
-    const int i = dict_struct_offset();
-    memcpy(*dict+i, dict_empty_struct()+i, dict_struct_size());
-# else
+
     *dict = (Dict *)dict_empty_struct();
-# endif
 }
 
 local_inline void
@@ -553,24 +515,26 @@ dict_new(void **type, ssize_t n, float lf)
          return dict;
     if (dict_set(&dict, n, lf) != 0)
         return dict_free(dict);
-# ifdef NO_PyAPI
-    dict AND (*type=dict);
-# endif
     return d;
 }
 
 local void *dict_remove(Dict **dict)
 {
     assert(NULL != dict && NULL != *dict);
+    assert(0 != dict_owned_memory(dict));
 
     Dict alias = {0};
 # ifdef NO_PyAPI
     clearfunc_t clear = (*dict)->clear;
 # endif
+
     dict_alias_copy(*dict, &alias);
-    dict_free_self_(dict); // TODO
+    if (dict_free_self_(dict) != 0)
+        return NULL;
+
 # ifdef NO_PyAPI
-    if (NULL != clear) dict_map(&alias, NULL, clear);
+    if (NULL != clear)
+        dict_map(&alias, NULL, clear);
 # else
     struct visit_t v = dict_set_visit_struct(&v, &alias);
     dict_for_each(v)
@@ -579,9 +543,44 @@ local void *dict_remove(Dict **dict)
         Py_DECREF(dict_vst_get_value(v));
     }
 # endif
+
     dict_free_ckhv_in_entry(&alias);
-#   define dict_remove(d) dict_remove(&d)
     return NULL;
+#   define dict_remove(d) dict_remove(&d)
+}
+
+
+local warn_unused int
+dict_map(Dict *dict,
+         const void    *arg,
+         int  (do_func *)(const Type *key,
+                          const Type *val,
+                          void *arg))
+{
+    assert(NULL != dict);
+
+    struct visit_t v = dict_set_visit_struct(&v, dict);
+
+    dict_for_each(v)
+    {
+        if (do_func(dict_vst_get_key(v), dict_vst_get_value(v), arg))
+            return -1;
+    }
+    return 0;
+}
+
+local_inline size_t
+dict_count_only_from(Dict *dict, size_t n)
+{
+    size_t  j = 0;
+    struct visit_t v = dict_set_visit_struct_n(&v, dict, n);
+
+    dict_for_each_mask(v)
+    {
+        j += POPCNT(dict_vst_get_mask(v));
+        dict_for_each_next_mask(v);
+    }
+    return j;
 }
 
 local_inline void *
@@ -639,7 +638,7 @@ dict_copy(Dict * restrict dest,
     if (NULL == d AND NOT(d=dict_new(&dest, n, dict_load_fact(src))))
         return d;
     if (NULL == dict_copy_insert_all_(d, src))
-        return (0 AND dict_remove(d)), NULL; // TODO
+        return (NULL == dest AND dict_remove(d)), NULL;
     return d;
 }
 
@@ -657,7 +656,7 @@ dict_ncopy(Dict * restrict dest,
     if (NULL == d AND NOT(d=dict_new(&dest, n, dict_load_fact(src))))
         return d;
     if (NULL == dict_copy_insert_n_(d, src, n))
-        return (0 AND dict_remove(d)), NULL;
+        return (NULL == dest AND dict_remove(d)), NULL;
     return d;
 }
 
@@ -671,27 +670,27 @@ local void *dict_clone(Dict *dict)
     return NULL;
 }
 
-
 warn_unused local void *
-dict_merge_(Dict *d1,1
+dict_merge_(Dict *d1,
             Dict *d2,
             Dict **dest)
 {
     Dict *d = NULL;
-    bool e1 = dict_isempty(d1), e2 = dict_isempty(d2);
+    bool  e = dict_isempty(d1), e_ = dict_isempty(d2);
 
-    if (NOT e1 AND e2)
+    if (NOT e AND e_)
         return dict_copy(dest?*dest:NULL, d1);
-    if (e1 AND NOT e2)
+    if (e AND NOT e_)
         return dict_copy(dest?*dest:NULL, d2);
 
-    const size_t n = dict_size(d1) + dict_size(d2);
-    Dict *d  = dict_new(dest, n, dict_load_fact(d1));
+    size_t n = dict_size(d1) + dict_size(d2);
+    Dict  *d = dict_new(dest, n, dict_load_fact(d1));
 
     if (NULL == d)
         return d;
     if (NOT dict_copy(d, d1) OR NOT dict_copy(d, d2))
         return dict_remove(d);
+
     dest AND (*dest=d);
     return d;
 }
@@ -752,7 +751,7 @@ dict_resize(Dict *dict, size_t n)
     if (NOT n)
         return dict_remove(dict);
     // we are rich! Do nothing
-    if (n <= dict->max_size)
+    if (n <= dict_maxsize(dict))
         return 0;
     return dict_rehash(dict, nsize);
 }
@@ -763,9 +762,9 @@ dict_update_key_in_entry(Dict *dict,
                          Type *restrict value,
                          size_t j)
 {
-    Type *tmp = dict->entries.values[j];
+    Type *tmp = DICT_ENT(dict)->values[j];
 
-    dict->entries.values[j] = value;
+    DICT_ENT(dict)->values[j] = value;
 #   ifndef NO_PyAPI
     Py_XDECREF(tmp);
     Py_XDECREF(key); // key already exist
@@ -784,15 +783,15 @@ dict_add_entry(Dict *dict,
                size_t tag,
                size_t j)
 {
-    entry_t entries = dict->entries;
+    entry_t *e = DICT_ENT(dict);
 
-    assert(NULL == entries.values[j]);
-    assert(NULL == entries.kh[j].key);
+    assert(NULL == e->values[j]);
+    assert(NULL == e->kh[j].key);
 
-    entries.cache[j]   = tag;
-    entries.values[j]  = value;
-    entries.kh[j].key  = key;
-    entries.kh[j].hash = hash;
+    e->cache[j]   = tag;
+    e->values[j]  = value;
+    e->kh[j].key  = key;
+    e->kh[j].hash = hash;
 
     inc_entry_size(dict);
     return 0;
@@ -803,15 +802,13 @@ key_generic_compare(const khpair_t it,
                     const Type    *key,
                     const hash_t   hash)
 {
-    int cmp;
-
     if (it->hash != hash)
         return 0;
     if (it->key == key)
         return 1;
 
     Py_INCREF(it->key);
-    cmp = PyObject_RichCompareBool(it->key, key, Py_EQ);
+    int cmp = PyObject_RichCompareBool(it->key, key, Py_EQ);
     Py_DECREF(it->key);
 
     return cmp;
@@ -820,17 +817,17 @@ key_generic_compare(const khpair_t it,
 //  const size_t group_idx = find_group_from_hash(hash, dict->capacity);
 
 local ssize_t
-lookup_insert_generic_nodeleted(Dict *dict,
-                                Type *restrict key,
-                                Type *restrict value,
-                                const hash_t   hash)
+dict_lookup_insert_(Dict *         dict,
+                    Type *restrict key,
+                    Type *restrict value,
+                    const hash_t   hash)
 {
     assert(NULL != dict);
     assert(NULL != key);
 
-    const uint8_t tag = ctag(hash);
-    const mm_t    dup = mm_duplicate(tag);
-    struct visit_t v  = {0}; // TODO
+    const  uint8_t tag = ctag(hash);
+    const  mm_t    dup = mm_duplicate(tag);
+    struct visit_t v   = {0}; // TODO
 
     dict_for_each_probe(v)
     {
@@ -852,19 +849,19 @@ lookup_insert_generic_nodeleted(Dict *dict,
 }
 
 locale_inline ssize_t
-lookup_insert_generic(Dict *dict,
-                      Type *restrict key,
-                      Type *restrict value,
-                      const hash_t   hash)
+dict_lookup_insert_deleted_(Dict *         dict,
+                            Type *restrict key,
+                            Type *restrict value,
+                            const hash_t   hash)
 {
     assert(NULL != dict);
     assert(NULL != key);
 
     bool    t = true; // true if k is unset
     size_t  k = 0;
-    struct visit_t v  = {0};
-    const uint8_t tag = ctag(hash);
-    const mm_t    dup = mm_duplicate(tag);
+    const  uint8_t tag = ctag(hash);
+    const  mm_t    dup = mm_duplicate(tag);
+    struct visit_t v   = {0};
 
     dict_for_each_probe(v)
     {
@@ -893,7 +890,7 @@ lookup_insert_generic(Dict *dict,
 }
 
 locale_inline ssize_t
-lookup_generic(Dict *dict, Type *key, hash_t hash)
+dict_lookup_generic_(Dict *dict, Type *key, hash_t hash)
 {
     assert(NULL != dict);
     assert(NULL != key);
@@ -936,6 +933,7 @@ lookup_generic(Dict *dict, Type *key, hash_t hash)
 #undef PLUSNGROUP
 #undef LASTGRP
 #undef NEXT_GROUP
+#undef DICT_ENT
 
 #undef dict_
 #undef Dict
