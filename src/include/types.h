@@ -71,15 +71,7 @@ typedef struct
     size_t  group_capacity;
     size_t  used_size; // number of put entries
     size_t  max_size;   // maximum size, no resize
-    float   lf; // load factor
     uint8_t flags; // internal use only (key kind, malloc)
 } QPyDictObject;
 
-#define y8(y) y, y, y, y, y, y, y, y
-static const uint8_t
-LOCAL_empty_tag_full_group[NGROUP_MAX] = {
-    y8(EMPTY), y8(EMPTY),
-    y8(EMPTY), y8(EMPTY)
-};
-#undef y8
 #endif // QPy_TYPES_H

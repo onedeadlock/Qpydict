@@ -27,6 +27,7 @@
  * Usually, unless FORCE_RESIZE is defined, resizing down may not actually rehash if it is possible not to. This is unlike rehashing, which rehashes regardless of any change
  */
 
+// GENERAL TODO: check_if_size_add_overflow, NGROUP_MAX
 #define PTR(ptr)   (void *)(ptr)
 #define DPTR(dptr) (*(void **)(dptr))
 #define SHPTR(ptr) (uint16_t *)PTR(ptr)
@@ -61,113 +62,6 @@ PURE(find_group_from_hash)(const hash_t hash,
     return ALIGN(hash & (size - 1), NGROUP) / NGROUP;
 }
 
-warn_unused local void *
-caligned_malloc(void *memdptr,
-                const uint16_t align_size,
-                const size_t   size)
-{
-    assert(align_size & (align_size - 1)); // ensure align_size is a power of 2 (just a rule; multiples still works)
-
-    const uint16_t max_offset = sizeof(uint16_t) + (align_size - 1);
-    if (size > (SIZE_MAX - max_offset_size))
-        return NULL;
-
-    void *ptr = malloc(size + max_offset_size);
-    if (NULL == ptr)
-        return ptr;
-    void *kptr = ALIGNU((uintptr_t)ptr + sizeof(uint16_t), align_size);
-    ((uint16_t *)kptr)[-1] = (uintptr_t)kptr - (uintptr_t)ptr; // store offset size just before the aligned memory
-
-    DPTR(memdptr) = kptr;
-    return kptr;
-}
-
-local void caligned_free(void *memptr)
-{
-    if (memptr == NULL)
-        return;
-
-    const uint16_t offset   = ((uint16_t *)memptr)[-1];
-    const void *   memstart = (uintptr_t)memptr - offset;
-
-    return free(memstart);
-}
-
-local_inline void *
-caligned_calloc(const size_t size,
-                const uint16_t align_size)
-{
-    void *ptr = NULL;
-
-    if (caligned_malloc(&ptr, align_size, size))
-        return memset(ptr, 0, size);
-    return ptr;
-}
-
-warn_unused local_inline void *
-caligned_malloc_set(const size_t size,
-                    const uint16_t align_size,
-                    const int fchar)
-{
-    void *ptr = NULL;
-
-    if (caligned_malloc(&ptr, align_size, size))
-        return memset(ptr, fchar, size);
-    return ptr;
-}
-
-local void *caligned_realloc(void *memdptr, uint16_t align_size, size_t n)
-{
-    assert(NULL != memdptr);
-
-    const uint16_t offset   = ((uint16_t *)memdptr)[-1];
-    const void *   memstart = (uintptr_t)memdptr - offset;
-
-    void *ptr = NULL;
-
-    if (NULL == caligned_malloc(&ptr, align_size, n))
-        return ptr;
-
-    DPTR(memdptr) = memcpy(ptr, DPTR(memdptr), n);
-    free(memstart);
-    return ptr;
-}
-
-warn_unused local_inline void *
-cache_malloc(void *memdptr, size_t n)
-{
-    void *ptr = NULL;
-
-    assert(size != 0 AND check_if_safe_add(n, NGROUP));
-
-    n += NGROUP;
-    ptr = caligned_malloc_set(n, NGROUP, EMPTY);
-    if (ptr)
-        DPTR(memdptr) = ptr;
-    return ptr;
-}
-
-warn_unused local_inline void *
-cache_realloc(void *memdptr, size_t n)
-{
-    void *ptr = NULL;
-
-    assert(size != 0 AND check_if_safe_add(n, NGROUP));
-
-    n += NGROUP;
-    if (caligned_realloc(&ptr, NGROUP, n))
-    {
-        DPTR(memdptr) = ptr;
-        return memset(ptr+LASTGRP(n), 0, n);
-    }
-    return ptr;
-}
-
-local_inline void cache_free(void *memptr)
-{
-    return caligned_free(memptr);
-}
-
 local_inline size_t next_power_of_two(size_t n)
 {
     assert(n != 0);
@@ -194,9 +88,9 @@ local_inline size_t prev_power_of_two(size_t n)
            );
 }
 
-local_inline size_t
-get_size_no_resize_trigger(const size_t size,
-                           const float  lf)
+local_inline   const size_t
+size_no_resize(const size_t size,
+               const float  lf)
 {
     return next_power_of_two(size / lf);
 }
@@ -208,9 +102,9 @@ try_size_requirement(const size_t size,
 {
     assert(size != 0);
 
-    size_t ts = get_size_no_resize_trigger(size, lf);
+    size_t mx = size_no_resize(size, lf);
 
-    if (check_if_safe_mul(ts, max_object_size, (size_t)0))
+    if (check_if_safe_mul(mx, max_object_size, (size_t)0))
         return ts;
     return 0;
 }
@@ -220,10 +114,19 @@ advice_size_requirement(const size_t size, const float lf)
 {
     if (0 == size)
         return 0;
-    return get_size_noresize_trigger(size, lf);
+    return size_no_resize(size, lf);
 }
 
-
+local_inline const void *dict_group_empty(void)
+{
+    static const cache_t group[NGROUP_MAX] = {
+#      define y8(y) y, y, y, y, y, y, y, y
+        y8(DICT_EMPTY), y8(DICT_EMPTY),
+        y8(DICT_EMPTY), y8(DICT_EMPTY)
+#      undef y8
+    };
+    return &group;
+}
 local_inline const void *dict_key_empty(void)
 {
     static const khpair_t kh = {NULL, 0};
@@ -239,9 +142,9 @@ local_inline const void *dict_value_empty(void)
 local_inline const Dict *dict_struct_empty(void)
 {
     static const Dict d = {
-        .entries.cache  = LOCAL_empty_tag_full_group,
+        .entries.cache  = dict_group_empty(),
         .entries.kh     = dict_key_empty(),
-        .enteies.values = dict_values_empty();
+        .entries.values = dict_values_empty();
     };
     return &d;
 }
@@ -267,13 +170,16 @@ local_inline const int dict_struct_size(void)
 }
 
 local_inline void
-dict_setcap(Dict *dict, size_t cap, size_t size, float lf)
+dict_setcap(Dict *dict,
+            const size_t cap,
+            const size_t size,
+            const float  lf)
 {
-    dict->capacity       = cap;
+    dict->capacity       = cap  | 0;
     dict->group_capacity = ALIGN(cap / NGROUP);
     dict->max_size       = (lf * cap);
-    dict->used_size      = size;
-    dict->lf             = lf;
+    dict->used_size      = size | 0;
+    dict->lf             = lf   + 0;
 }
 
 local_inline const size_t dict_size(const Dict *dict)
@@ -290,7 +196,7 @@ local_inline const size_t dict_maxsize(const Dict *dict)
 
 local_inline const size_t dict_capacity(const Dict *dict)
 {
-    assert(NULL != dict);
+    assert(NULL != 
     return dict->capacity;
 }
 
@@ -309,31 +215,42 @@ local_inline int dict_isunused(const Dict *dict)
 local_inline const float
 dict_load_fact(const Dict *dict)
 {
-    return dict->lf;
+    assert(NULL != dict);
+    return dict->maxsize / (double) dict->capacity + 5e-4;
 }
 
 local_inline int
-dict_set_load_fact(Dict *dict, float lf)
+dict_set_load_fact(Dict *dict, const float lf)
 {
     assert(NULL != dict);
 
     if (out_of_range_lf(lf))
         return -1;
-    dict->lf = lf;
+
     dict->max_size = dict->capacity * lf;
 
     return 0;
 }
 
-local_inline void dict_set_owned_memory(const Dict *dict)
+local_inline void
+dict_set_size(Dict *dict, const size_t n)
 {
     assert(NULL != dict);
+
+    dict->used_size = n | 0;
+}
+
+local_inline void dict_set_owned_memory(Dict *dict)
+{
+    assert(NULL != dict);
+
     dict->flags |= 0x80;
 }
 
-local_inline int dict_owned_memory(const Dict *dict)
+local_inline const int dict_owned_memory(const Dict *dict)
 {
     assert(NULL != dict);
+
     return dict->flags & 0x80;
 }
 
@@ -375,7 +292,6 @@ dict_realloc(void *dp, size_t n)
 #  endif
     return DKTO_PTR(ptr, dp);
 }
-#undef DKTO_PTR
 
 local_inline void dict_free(void *ptr)
 {
@@ -386,7 +302,88 @@ local_inline void dict_free(void *ptr)
 #  endif
 }
 
-local_inline void *dict_malloc_self_(void *type, size_t UNUSED(n))
+#define INTPTR(x)    ((uintptr_t)(x))
+#define ALIGNP(x, k) (void *)ALIGNU(x, k)
+
+warn_unused local void *
+dict_aligned_malloc(void *dp,
+                    const size_t n, // size
+                    const short  k) // align size
+{
+    assert(0 == (k & (k - 1))); // must be a power of two 
+
+    void *ptr   = NULL;
+    short mx = (k - 1) + sizeof mx; // max offset size
+
+    if (check_if_size_add_overflow(n, mx))
+        return NULL;
+    if (dict_malloc(&ptr, n + mx))
+        return ptr;
+
+    short *kp = ALIGNP(INTPTR(ptr) + sizeof mx, k);
+
+    kp[-1] = INTPTR(kp) - INTPTR(ptr);
+
+    return DKTO_PTR(kp, dp);
+}
+
+local void dict_aligned_free(void *ptr)
+{
+    if (ptr == NULL)
+        return;
+    const short mx = ((short *)ptr)[-1];
+    const void *st = INTPTR(ptr) - mx;
+
+    return free(st);
+}
+#undef INTPTR
+#undef ALIGNP
+
+local_inline void *
+dict_aligned_calloc(const size_t n,
+                    const short  k)
+{
+    void *ptr = dict_aligned_malloc(NULL, n, k);
+
+    if (NULL != ptr)
+        return memset(ptr, '\0', n);
+
+    return ptr;
+}
+
+warn_unused local_inline void *
+dict_aligned_mset(const size_t n,
+                  const short  k,
+                  const int    c)
+{
+    void *ptr = dict_aligned_malloc(NULL, n, k);
+
+    if (NULL != ptr)
+        return memset(ptr, c, n);
+
+    return ptr;
+}
+
+warn_unused local_inline void *
+dict_cmalloc(void *dp, const size_t n)
+{
+    assert(size != 0);
+
+    if (check_if_size_add_overflow(n, NGROUP))
+        return NULL;
+
+    void *ptr = dict_aligned_mset(n+NGROUP, NGROUP, DICT_EMPTY);
+
+    return DKTO_PTR(ptr, dp);
+}
+
+local_inline void dict_cfree(void *ptr)
+{
+    return dict_aligned_free(ptr);
+}
+
+warn_unused local_inline void *
+dict_malloc_self_(void *UNUSED(type), size_t UNUSED(n))
 {
     Dict *self = NULL;
 
@@ -424,7 +421,7 @@ local_inline int dict_malloc_ckhv(cache_t  **c,
                                   Type     **v,
                                   khpair_t **kh)
 {
-    if (NOT cache_malloc(c, n))
+    if (NOT dict_cmalloc(c, n))
         return -1;
     if (dict_malloc(v,  n * sizeof(Type *)) AND
         dict_malloc(kh, n * sizeof(khpair_t)))
@@ -445,7 +442,7 @@ local_inline void dict_free_ckhv(void * restrict c,
                                  void * restrict v,
                                  void * restrict kh)
 {
-    calloc_free(c);
+    dict_cfree(c);
     if (NULL != v)
         dict_free((Type **)(v) - 1);
     if (NULL != kh)
@@ -549,7 +546,6 @@ local void *dict_remove(Dict **dict)
 #   define dict_remove(d) dict_remove(&d)
 }
 
-
 local warn_unused int
 dict_map(Dict *dict,
          const void    *arg,
@@ -635,7 +631,7 @@ dict_copy(Dict * restrict dest,
 
     if (dict_isempty(src))
         return dict_empty_struct();
-    if (NULL == d AND NOT(d=dict_new(&dest, n, dict_load_fact(src))))
+    if (NULL == d AND NOT(d=dict_new(dest, n, dict_load_fact(src))))
         return d;
     if (NULL == dict_copy_insert_all_(d, src))
         return (NULL == dest AND dict_remove(d)), NULL;
@@ -653,7 +649,7 @@ dict_ncopy(Dict * restrict dest,
 
     if (dict_isempty(src))
         return dict_empty_struct();
-    if (NULL == d AND NOT(d=dict_new(&dest, n, dict_load_fact(src))))
+    if (NULL == d AND NOT(d=dict_new(dest, n, dict_load_fact(src))))
         return d;
     if (NULL == dict_copy_insert_n_(d, src, n))
         return (NULL == dest AND dict_remove(d)), NULL;
@@ -683,8 +679,10 @@ dict_merge_(Dict *d1,
     if (e AND NOT e_)
         return dict_copy(dest?*dest:NULL, d2);
 
-    size_t n = dict_size(d1) + dict_size(d2);
-    Dict  *d = dict_new(dest, n, dict_load_fact(d1));
+    const size_t n = dict_size(d1), m = dict_size(d2);
+    if (check_if_size_add_overflow(n, m))
+        return NULL;
+    Dict  *d = dict_new(dest, n+m, dict_load_fact(d1));
 
     if (NULL == d)
         return d;
