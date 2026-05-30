@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include "include/types.h"
 #include "include/mm.h"
-#unclude "include/visit.h"
+#include "include/visit.h"
 #include "include/defs.h"
 
 #ifndef QPy_MM_UNSUPPORTED
@@ -196,7 +196,7 @@ local_inline const size_t dict_maxsize(const Dict *dict)
 
 local_inline const size_t dict_capacity(const Dict *dict)
 {
-    assert(NULL != 
+    assert(NULL != dict);
     return dict->capacity;
 }
 
@@ -216,7 +216,7 @@ local_inline const float
 dict_load_fact(const Dict *dict)
 {
     assert(NULL != dict);
-    return dict->maxsize / (double) dict->capacity + 5e-4;
+    return (1. * dict->maxsize) / dict->capacity + 5e-4; // TODO: double overflow
 }
 
 local_inline int
@@ -312,8 +312,8 @@ dict_aligned_malloc(void *dp,
 {
     assert(0 == (k & (k - 1))); // must be a power of two 
 
-    void *ptr   = NULL;
-    short mx = (k - 1) + sizeof mx; // max offset size
+    void *ptr = NULL;
+    short mx  = (k - 1) + sizeof mx; // max offset size
 
     if (check_if_size_add_overflow(n, mx))
         return NULL;
@@ -480,13 +480,12 @@ dict_set(Dict **dict,
     n = try_size_requirement(n, sizeof(khpair_t), lf);
     if (0 == n)
         return -1;
-    if (dict_malloc_ckhv(c, v, kh))
+    if (NOT dict_malloc_ckhv(c, v, kh))
         return -1;
     dict_setcap(*dict, n, 0, lf);
 
     return 0;
 }
-#undef DICT_ENT
 
 local_inline void dict_unset(Dict **dict)
 {
@@ -511,7 +510,7 @@ dict_new(void **type, ssize_t n, float lf)
     if (NULL == dict)
          return dict;
     if (dict_set(&dict, n, lf) != 0)
-        return dict_free(dict);
+        return dict_free_self_(dict);
     return d;
 }
 
@@ -519,16 +518,13 @@ local void *dict_remove(Dict **dict)
 {
     assert(NULL != dict && NULL != *dict);
     assert(0 != dict_owned_memory(dict));
-
-    Dict alias = {0};
 # ifdef NO_PyAPI
     clearfunc_t clear = (*dict)->clear;
 # endif
+    Dict alias = **dict;
 
-    dict_alias_copy(*dict, &alias);
     if (dict_free_self_(dict) != 0)
         return NULL;
-
 # ifdef NO_PyAPI
     if (NULL != clear)
         dict_map(&alias, NULL, clear);
@@ -540,7 +536,6 @@ local void *dict_remove(Dict **dict)
         Py_DECREF(dict_vst_get_value(v));
     }
 # endif
-
     dict_free_ckhv_in_entry(&alias);
     return NULL;
 #   define dict_remove(d) dict_remove(&d)
@@ -584,28 +579,26 @@ dict_copy_insert_n_(Dict * restrict dest,
                     const Dict * restrict src,
                     const size_t n)
 {
-    size_t  i = 0; // count copied entries
+    size_t  k = n | 0;
     struct visit_t v = dict_set_visit_struct(&v, src);
-
+    
     dict_for_each(v)
     {
         khpair_t kh  = dict_vst_get_kh(v);
         Type *   val = dict_vst_get_value(v);
 
-        if (dict_lookup_insert(dest, kh.key, val, kh.hash))
-            return -1;
-        if (++i < n)
-            goto copied;
+        if (dict_insert(dest, kh.key, val, kh.hash))
+            return NULL;
+        if (NOT --k)
+            goto ret;
     }
- copied:
-    dict_set_size(dest, i);
-    return dest;
+ ret:
+    return dict_set_size(dest, n - k), dest;
 }
 
 local_inline void *
 dict_copy_insert_all_(Dict * restrict dest,
-                      const Dict * restrict src,
-                      const size_t n)
+                      const Dict * restrict src)
 {
     struct visit_t v = dict_set_visit_struct(&v, src);
 
@@ -614,45 +607,48 @@ dict_copy_insert_all_(Dict * restrict dest,
         khpair_t kh  = dict_vst_get_kh(v);
         Type *   val = dict_vst_get_value(v);
 
-        if (dict_lookup_insert_(dest, kh.key, val, kh.hash))
+        if (dict_insert(dest, kh.key, val, kh.hash))
             return NULL;
     }
-    dict_set_size(dest, dict_size(src));
-    return dest;
+    return dict_set_size(dest, dict_size(src)), dest;
 }
+
+#define DICT_NEW NULL
 
 warn_unused local_inline void *
 dict_copy(Dict * restrict dest,
           Dict * restrict src)
 {
     Dict *d = dest;
+    bool  k = DICT_NEW == dest;
 
     assert(NULL != src);
 
     if (dict_isempty(src))
         return dict_empty_struct();
-    if (NULL == d AND NOT(d=dict_new(dest, n, dict_load_fact(src))))
+    if (true == k AND NOT(d=dict_new(dest, n, dict_load_fact(src))))
         return d;
     if (NULL == dict_copy_insert_all_(d, src))
-        return (NULL == dest AND dict_remove(d)), NULL;
+        return (true == k AND dict_remove(d)) & 0;
     return d;
 }
 
 warn_unused local_inline void *
 dict_ncopy(Dict * restrict dest,
            Dict * restrict src,
-           size_t n)
+           const size_t n)
 {
     Dict *d = dest;
+    bool  k = DICT_NEW == dest;
 
-    assert(NULL != src);
+    assert(NULL != src AND 0 != n);
 
     if (dict_isempty(src))
         return dict_empty_struct();
-    if (NULL == d AND NOT(d=dict_new(dest, n, dict_load_fact(src))))
+    if (true == k AND NOT(d=dict_new(dest, n, dict_load_fact(src))))
         return d;
     if (NULL == dict_copy_insert_n_(d, src, n))
-        return (NULL == dest AND dict_remove(d)), NULL;
+        return (true == k AND dict_remove(d)) & 0;
     return d;
 }
 
@@ -661,7 +657,7 @@ local void *dict_clone(Dict *dict)
     assert(NULL != dict);
 
     if (dict_isempty(dict))
-        return empty_dict;
+        return dict_empty_struct();
     // TODO
     return NULL;
 }
@@ -669,53 +665,65 @@ local void *dict_clone(Dict *dict)
 warn_unused local void *
 dict_merge_(Dict *d1,
             Dict *d2,
-            Dict **dest)
+            bool reuse)
 {
     Dict *d = NULL;
     bool  e = dict_isempty(d1), e_ = dict_isempty(d2);
 
     if (NOT e AND e_)
-        return dict_copy(dest?*dest:NULL, d1);
+        return dict_copy(DICT_NEW, d1);
     if (e AND NOT e_)
-        return dict_copy(dest?*dest:NULL, d2);
+        return dict_copy(DICT_NEW, d2);
 
     const size_t n = dict_size(d1), m = dict_size(d2);
+    // reuse first dict if rich
+    if (true == reuse AND (dict_maxsize(d1) - n) > m)
+        return dict_copy(d1, d2);
+
     if (check_if_size_add_overflow(n, m))
         return NULL;
-    Dict  *d = dict_new(dest, n+m, dict_load_fact(d1));
-
+    d = dict_new(dest, n+m, dict_load_fact(d1));
     if (NULL == d)
         return d;
     if (NOT dict_copy(d, d1) OR NOT dict_copy(d, d2))
         return dict_remove(d);
 
-    dest AND (*dest=d);
     return d;
 }
 
-warn_unused local void *
+warn_unused local_inline void *
 dict_merge(Dict *d1,
-           Dict *d2,
-           Dict **dest)
+           Dict *d2)
 {
     assert(NULL != d1 && NULL != d2);
 
     if (d1 == d2)
-        return dict_copy(*dest, d1);
-    return dict_merge_(d1, d2, dest);
+        return dict_copy(DICT_NEW, d1);
+    return dict_merge_(d1, d2, false);
 }
 
-warn_unused local void *
+warn_unused local_inline void *
 dict_merge_nocopy(Dict *d1,
-                  Dict *d2,
-                  Dict **dest)
+                  Dict *d2)
 {
     assert(NULL != d1 && NULL != d2);
 
     if (d1 == d2)
         return d1;
-    return dict_merge_(d1, d2, dest);
+    return dict_merge_(d1, d2, false);
 }
+
+warn_unused local_inline void *
+dict_update(Dict *d1,
+            Dict *d2)
+{
+    assert(NULL != d1 && NULL != d2);
+
+    if (d1 == d2 OR dict_isempty(d2))
+        return d1;
+    return dict_merge_(d1, d2, true);
+}
+#undef DICT_NEW
 
 local_inline int
 dict_rehash(Dict **dict, size_t n)
