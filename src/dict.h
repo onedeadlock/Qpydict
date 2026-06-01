@@ -317,7 +317,7 @@ dict_aligned_malloc(void *dp,
 
     if (check_if_size_add_overflow(n, mx))
         return NULL;
-    if (dict_malloc(&ptr, n + mx))
+    if (NOT dict_malloc(&ptr, n + mx))
         return ptr;
 
     short *kp = ALIGNP(INTPTR(ptr) + sizeof mx, k);
@@ -518,25 +518,22 @@ local void *dict_remove(Dict **dict)
 {
     assert(NULL != dict && NULL != *dict);
     assert(0 != dict_owned_memory(dict));
-# ifdef NO_PyAPI
-    clearfunc_t clear = (*dict)->clear;
-# endif
-    Dict alias = **dict;
 
-    if (dict_free_self_(dict) != 0)
-        return NULL;
 # ifdef NO_PyAPI
-    if (NULL != clear)
-        dict_map(&alias, NULL, clear);
+    if (NULL != (*dict)->clear)
+        dict_map(&alias, NULL, (*dict)->clear);
 # else
     struct visit_t v = dict_set_visit_struct(&v, &alias);
+
     dict_for_each(v)
     {
         Py_DECREF(dict_vst_get_key(v));
         Py_DECREF(dict_vst_get_value(v));
     }
 # endif
-    dict_free_ckhv_in_entry(&alias);
+    dict_free_ckhv_in_entry(*dict);
+    dict_free_self_(*dict);
+    dict_unset(dict);
     return NULL;
 #   define dict_remove(d) dict_remove(&d)
 }
@@ -725,6 +722,8 @@ dict_update(Dict *d1,
 }
 #undef DICT_NEW
 
+#define DICT_VCOPY(d, n, b) (n < dict_size(d) ? dict_ncopy(b, d, n) : dict_copy(b, d)) 
+
 local_inline int
 dict_rehash(Dict **dict, size_t n)
 {
@@ -733,20 +732,15 @@ dict_rehash(Dict **dict, size_t n)
     if (0 == n)
         return dict_remove(*dict);
 
-    Dict a = *dict, *d;
-
-    dict_unset(*dict);
-    // copy old dict
-    d = n < dict_maxsize(&a) ? dict_ncopy(NULL, &a, n) : dict_copy(NULL, &a);
+    Dict *d = DICT_VCOPY(*dict, n, NULL); 
     if (NULL == d)
-    {
-        **dict = alias;
         return -1;
-    }
-    dict_remove(&a); // remove dict
-    *dict = *d; // TODO: alias
+
+    dict_remove(*dict);
+    **dict = *d;
     return 0;
 }
+#undef DICT_VCOPY
 
 local int
 dict_resize(Dict *dict, size_t n)
@@ -759,14 +753,11 @@ dict_resize(Dict *dict, size_t n)
     // we are rich! Do nothing
     if (n <= dict_maxsize(dict))
         return 0;
-    return dict_rehash(dict, nsize);
+    return dict_rehash(dict, n);
 }
 
 locale_inline int
-dict_update_key_in_entry(Dict *dict,
-                         Type *restrict key,
-                         Type *restrict value,
-                         size_t j)
+dict_swapval(Dict *dict, const Type *key, Type *value, size_t j)
 {
     Type *tmp = DICT_ENT(dict)->values[j];
 
@@ -804,21 +795,20 @@ dict_add_entry(Dict *dict,
 }
 
 local_inline int
-key_generic_compare(const khpair_t it,
-                    const Type    *key,
-                    const hash_t   hash)
+dict_keycmp(const khpair_t it, const Type *key, const hash_t hash)
 {
     if (it->hash != hash)
         return 0;
     if (it->key == key)
         return 1;
 
-    Py_INCREF(it->key);
+    Py_INCREF(it->key); // keep a reference: bad `eq` may attempt to delete key
     int cmp = PyObject_RichCompareBool(it->key, key, Py_EQ);
     Py_DECREF(it->key);
 
     return cmp;
 }
+#define dict_keycmp(d, i, k, h) dict_keycmp(i, k, h)
 
 //  const size_t group_idx = find_group_from_hash(hash, dict->capacity);
 
@@ -833,23 +823,26 @@ dict_lookup_insert_(Dict *         dict,
 
     const  uint8_t tag = ctag(hash);
     const  mm_t    dup = mm_duplicate(tag);
-    struct visit_t v   = {0}; // TODO
+    struct visit_t v;
 
-    dict_for_each_probe(v)
+    vset_struct(&v, dict, dict_hash_to_group_idx(hash));
+
+    dict_for_each_p(v)
     {
-        dict_cmp_for_each_set_ent(v, dup)
+        dict_for_each_mask_p(v, dup)
         {
-            khpair_t kh = dict_vst_get_kh(v);
-            int cmp = key_generic_compare(kh, key, hash);
-            if (UNLIKELY(cmp < 0))
-                return -1;
-            if (cmp)
-                return dict_update_key_in_entry(dict, key, value, dict_vst_get_index());
+            khpair_t kh = vget_keyhash(v);
+            int cmp = dict_keycmp(dict, kh, key, hash);
+            if (cmp) {
+                if (UNLIKELY(cmp < 0))
+                    return -1;
+                return dict_swapval(dict, key, value, vget_idx(v));
+            }
         }
 
-        mask_t mask = mm_test_empty(dict_vst_get_mm_group(v));
+        mask_t mask = mm_test_empty(vget_group(v));
         if (LIKELY(mask))
-            return dict_add_entry(dict, key, value, hash, tag, mm_scan_mask(mask));
+            return dict_add_entry(dict, key, value, hash, tag, vget_grpidx(v)+mm_scan_mask(mask));
     }
     UNREACHABLE();
 }
@@ -867,25 +860,28 @@ dict_lookup_insert_deleted_(Dict *         dict,
     size_t  k = 0;
     const  uint8_t tag = ctag(hash);
     const  mm_t    dup = mm_duplicate(tag);
-    struct visit_t v   = {0};
+    struct visit_t v;
 
-    dict_for_each_probe(v)
+    vset_struct(&v, dict, dict_hash_to_group_idx(hash));
+
+    dict_for_each_p(v)
     {
-        dict_cmp_for_each_set_ent(v, dup)
+        dict_for_each_mask_p(v, dup)
         {
-            khpair_t kh = dict_vst_get_kh(v);
-            int cmp = key_generic_compare(kh, key, hash);
-            if (UNLIKELY(cmp < 0))
-                return -1;
-            if (cmp)
-                return dict_update_key_in_entry(dict, key, value, dict_vst_get_index(v));
+            khpair_t kh = vget_keyhash(v);
+            int cmp = dict_keycmp(dict, kh, key, hash);
+            if (cmp) {
+                if (UNLIKELY(cmp < 0))
+                    return -1;
+                return dict_swapval(dict, key, value, vget_idx(v));
+            }
         }
 
         mask_t UNUSED(m) = 0;
-        if ((t) AND (m=mm_find_empty_slot(dict_vst_get_mm_group(v))))
-            k=dict_vst_get_group_index(v)+mm_scan_mask(m), t=false;
+        if ((t) AND (m=mm_find_empty_slot(vget_group(v))))
+            k=vget_grpidx(v)+mm_scan_mask(m), t=false;
 
-        if (mm_test_empty_fast(dict_vst_get_mm_group(v)))
+        if (mm_test_empty_fast(vget_group(v)))
         {
             if (NOT (t))
                 return dict_add_entry(dict, key, value, hash, tag, k);
@@ -902,20 +898,23 @@ dict_lookup_generic_(Dict *dict, Type *key, hash_t hash)
     assert(NULL != key);
 
     const mm_t dup   = mm_duplicate(ctag(hash));
-    struct visit_t v = {0};
+    struct visit_t v;
 
-    dict_for_each_probe(v)
+    vset_struct(&v, dict, dict_hash_to_group_idx(hash));
+
+    dict_for_each_p(v)
     {
-        dict_cmp_for_each_set_ent(v, dup)
+        dict_for_each_mask_p(v, dup)
         {
-            khpair_t kh = dict_vst_get_kh(v);
-            int cmp = key_generic_compare(kh, key, hash);
-            if (UNLIKELY(cmp < 0))
-                return -1;
-            if (cmp)
-                return dict_vst_get_index(v);
+            khpair_t kh = vget_keyhash(v);
+            int cmp = dict_keycmp(dict, kh, key, hash);
+            if (cmp) {
+                if (UNLIKELY(cmp < 0))
+                    return -1;
+                return dict_swapval(dict, key, value, vget_idx(v));
+            }
         }
-        if (mm_test_empty_fast(dict_vst_get_mm_group(v)))
+        if (mm_test_empty_fast(vget_group(v)))
             return -1;
     }
     UNREACHABLE();
