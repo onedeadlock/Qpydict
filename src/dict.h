@@ -408,7 +408,10 @@ local_inline void *dict_free_self_(void *dp)
         return NULL;
 
 #  ifndef NO_PyAPI
-    Py_TYPE(self)->tp_free(self);
+    PyTypeObject *tp = Py_TYPE(tp);
+    if (tp->tp_flags & Py_TPFLAGS_HAVE_GC)
+        PyObject_GC_UnTrack(tp);
+    tp->tp_free(self);
 #  else
     dict_free(self);
 #  endif
@@ -494,11 +497,44 @@ local_inline void dict_unset(Dict **dict)
     *dict = (Dict *)dict_empty_struct();
 }
 
-local_inline void
-dict_alias_copy(const Dict * restrict dict, Dict * restrict alias)
+local warn_unused int
+dict_map(Dict *dict,
+         const void    *arg,
+         int  (do_fn *)(const Type *key,
+                          const Type *val,
+                          void *arg))
 {
-    assert(NULL != dict AND NULL != alias);
-    *alias = *dict;
+    assert(NULL != dict);
+
+    struct visit_t v;
+
+    vset_struct(&v, dict, 0);
+
+    dict_for_each(v)
+    {
+        if (do_fn(vget_key(v), vget_value(v), arg))
+            return -1;
+    }
+    return 0;
+}
+
+local_inline size_t
+dict_count_used(Dict *dict, size_t n)
+{    
+    if (0 == n)
+        return dict_size(dict);
+    if (n >= dict_maxsize(n))
+        return 0;
+
+    size_t  k = 0;
+    struct visit_t v = *vset_struct(&v, dict, n);
+
+    dict_for_each_mask(v)
+    {
+        k += POPCNT(vget_mask(v));
+        vset_next(v);
+    }
+    return k;
 }
 
 warn_unused local void *
@@ -523,12 +559,12 @@ local void *dict_remove(Dict **dict)
     if (NULL != (*dict)->clear)
         dict_map(&alias, NULL, (*dict)->clear);
 # else
-    struct visit_t v = dict_set_visit_struct(&v, &alias);
+    struct visit_t v = *vset_struct(&v, dict, 0);
 
     dict_for_each(v)
     {
-        Py_DECREF(dict_vst_get_key(v));
-        Py_DECREF(dict_vst_get_value(v));
+        Py_DECREF(vget_key(v));
+        Py_DECREF(vget_value(v));
     }
 # endif
     dict_free_ckhv_in_entry(*dict);
@@ -538,51 +574,20 @@ local void *dict_remove(Dict **dict)
 #   define dict_remove(d) dict_remove(&d)
 }
 
-local warn_unused int
-dict_map(Dict *dict,
-         const void    *arg,
-         int  (do_func *)(const Type *key,
-                          const Type *val,
-                          void *arg))
-{
-    assert(NULL != dict);
-
-    struct visit_t v = dict_set_visit_struct(&v, dict);
-
-    dict_for_each(v)
-    {
-        if (do_func(dict_vst_get_key(v), dict_vst_get_value(v), arg))
-            return -1;
-    }
-    return 0;
-}
-
-local_inline size_t
-dict_count_only_from(Dict *dict, size_t n)
-{
-    size_t  j = 0;
-    struct visit_t v = dict_set_visit_struct_n(&v, dict, n);
-
-    dict_for_each_mask(v)
-    {
-        j += POPCNT(dict_vst_get_mask(v));
-        dict_for_each_next_mask(v);
-    }
-    return j;
-}
-
 local_inline void *
 dict_copy_insert_n_(Dict * restrict dest,
                     const Dict * restrict src,
                     const size_t n)
 {
     size_t  k = n | 0;
-    struct visit_t v = dict_set_visit_struct(&v, src);
-    
+    struct visit_t v;
+
+    vset_struct(&v, dict, 0);
+
     dict_for_each(v)
     {
-        khpair_t kh  = dict_vst_get_kh(v);
-        Type *   val = dict_vst_get_value(v);
+        khpair_t kh  = vget_keyhash(v);
+        Type *   val = vget_value(v);
 
         if (dict_insert(dest, kh.key, val, kh.hash))
             return NULL;
@@ -597,12 +602,14 @@ local_inline void *
 dict_copy_insert_all_(Dict * restrict dest,
                       const Dict * restrict src)
 {
-    struct visit_t v = dict_set_visit_struct(&v, src);
+    struct visit_t v;
+
+    vset_struct(&v, dict, 0);
 
     dict_for_each(v)
     {
-        khpair_t kh  = dict_vst_get_kh(v);
-        Type *   val = dict_vst_get_value(v);
+        khpair_t kh  = vget_keyhash(v);
+        Type *   val = vget_value(v);
 
         if (dict_insert(dest, kh.key, val, kh.hash))
             return NULL;
@@ -908,11 +915,7 @@ dict_lookup_generic_(Dict *dict, Type *key, hash_t hash)
         {
             khpair_t kh = vget_keyhash(v);
             int cmp = dict_keycmp(dict, kh, key, hash);
-            if (cmp) {
-                if (UNLIKELY(cmp < 0))
-                    return -1;
-                return dict_swapval(dict, key, value, vget_idx(v));
-            }
+            if (cmp) return cmp;
         }
         if (mm_test_empty_fast(vget_group(v)))
             return -1;
