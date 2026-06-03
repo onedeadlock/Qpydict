@@ -18,21 +18,21 @@
 typedef uintptr_t unsigned long int
 #endif
 
-#if NO_PyAPI
+#ifndef NO_PyAPI
 typedef PyObject Type;
 typedef Py_ssize_t ssize_t;
 typedef Py_hash_t hash_t;
 #else
-typedef void     Type;
-typedef long int ssize_t;
-typedef unsigned long int hash_t
+typedef void Type;
+//typedef long int ssize_t;
+typedef unsigned long int hash_t;
 #endif
 
 typedef uint8_t cache_t;
 
-typedef hash_t (hashfunc_t  *)(Type *key);
-typedef int    (cmpfunc_t   *)(Type *t, Type *u);
-typedef void   (clearfunc_t *)(Type *key, Type *value, void *arg);
+typedef hash_t (* hashfunc_t)(Type *key);
+typedef int    (* cmpfunc_t)(Type *t, Type *u);
+typedef void   (* clearfunc_t)(Type *key, Type *value, void *arg);
 
 typedef struct
 {

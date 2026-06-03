@@ -7,6 +7,9 @@
 #ifndef AND
 #    define AND  &&
 #endif
+#ifndef NOT
+#    define NOT !
+#endif
 
 #if defined(_WIN32) OR defined(_WIN64) OR defined(_MSC_VER)
 #    include <intrin.h>
@@ -40,7 +43,7 @@
 #if has_builtin(__builtin_clzll)
 #    define BSF(x)    __builtin_clzll(x)
 #    define BSR(x)    __builtin_ctzll(x)
-#    define POPCNT(x) __builtin_popcntll(x)
+#    define POPCNT(x) __builtin_popcountll(x)
 #elif HAVE_INTEL_COMPILER OR HAVE_MSVC_COMPILER
 #    if defined(_bit_scan_forward)
 #        define BSF(x) _bit_scan_forward(x)
@@ -51,8 +54,8 @@ static inline __forceinline uint64_t BSF(const uint64_t v)
     return (_BitScanForward64(&idx, v), idx);
 }
 #    endif
-#    if defined(_bit_scan_forward)
-#        define BSF(x) _bit_scan_forward(x)
+#    if defined(_bit_scan_reverse)
+#        define BSR(x) _bit_scan_reverse(x)
 #    else
 static inline __forceinline uint64_t BSR(const uint64_t v)
 {
@@ -116,7 +119,7 @@ static inline __forceinline uint64_t BSR(const uint64_t v)
 #endif
 
 #if has_attribute(__pure__)
-#    define PURE(x) x __attribute__((pure))
+#    define PURE(x) __attribute__((pure)) x
 #else
 #    define PURE(x) x
 #endif
@@ -137,17 +140,21 @@ static inline __forceinline uint64_t BSR(const uint64_t v)
 #endif
 
 // lower threshold of entries that can processed at a time
-#define NGROUP_MAX 8
+#define NGROUP_MIN 8
 // upper threshold of entries that can processed at a time
 #define NGROUP_MAX 32
+// number of entries in a group
+#ifndef NGROUP
+#    define NGROUP NGROUP_MIN
+#endif
 
 // meta-tags used to define the state of an entry as used, deleted or empty 
 #if CACHE_TAG_NOZERO
-#    define EMPTY_ENTRY   0xff
-#    define DELETED_ENTRY 0x80
+#    define DICT_EMPTY 0xff
+#    define DICT_DEL   0x80
 #else
-#    define EMPTY_ENTRY   0x00
-#    define DELETED_ENTRY 0x80
+#    define DICT_EMPTY 0x00
+#    define DICT_DEL   0x80
 #endif
 
 // logging
@@ -156,6 +163,7 @@ static inline __forceinline uint64_t BSR(const uint64_t v)
 #        define LOG(file, fmt, ...)  fprintf(f, fmt, __VA_ARGS__)
 #    else
 #        define LOG(...) // TODO
+#    endif
 #else
 #    define LOG(...)
 #endif

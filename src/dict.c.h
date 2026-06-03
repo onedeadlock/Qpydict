@@ -2,6 +2,8 @@
 #define QPy_DICT_H
 #include <stdbool.h>
 #include <stdlib.h>
+#include <string.h>
+#include <assert.h>
 #include "include/types.h"
 #include "include/mm.h"
 #include "include/visit.h"
@@ -42,9 +44,6 @@
 
 #define out_of_range_lf(lf) ((lf) < .3 OR(lf) > 1.)
 #define inc_entry_size(d)   ++((d)->used_size)
-
-#define dict_slot(d, p, i) (((p) + (i)) & (i - 1)) // TODO
-#define probe_next_dict_slot(p, c) ((p) += 1 + (c)++)
 
 #ifndef CACHE_TAG_NOZERO
 local_inline int PURE(ctag)(const uint64_t v)
@@ -105,7 +104,7 @@ try_size_requirement(const size_t size,
     size_t mx = size_no_resize(size, lf);
 
     if (check_if_safe_mul(mx, max_object_size, (size_t)0))
-        return ts;
+        return mx;
     return 0;
 }
 
@@ -117,39 +116,30 @@ advice_size_requirement(const size_t size, const float lf)
     return size_no_resize(size, lf);
 }
 
-local_inline const void *dict_group_empty(void)
-{
-    static const cache_t group[NGROUP_MAX] = {
-#      define y8(y) y, y, y, y, y, y, y, y
-        y8(DICT_EMPTY), y8(DICT_EMPTY),
-        y8(DICT_EMPTY), y8(DICT_EMPTY)
-#      undef y8
-    };
-    return &group;
-}
-local_inline const void *dict_key_empty(void)
-{
-    static const khpair_t kh = {NULL, 0};
-    return &kh + sizeof kh; // [-1] = kh
-}
+static cache_t const
+dict_group_empty[NGROUP_MAX] = {
+#   define y8(y) y, y, y, y, y, y, y, y
+    y8(DICT_EMPTY), y8(DICT_EMPTY),
+    y8(DICT_EMPTY), y8(DICT_EMPTY)
+#   undef y8
+#   define dict_group_empty() (void *)&dict_group_empty
+};
 
-local_inline const void *dict_value_empty(void)
-{
-    static const Type *v = NULL;
-    return &v + sizeof v; // [-1] = v
-}
+static khpair_t const
+dict_keyhash_empty[2] = {0};
+#define dict_keyhash_empty() (void *)(dict_keyhash_empty+1)
 
-local_inline const Dict *dict_struct_empty(void)
-{
-    static const Dict d = {
-        .entries.cache  = dict_group_empty(),
-        .entries.kh     = dict_key_empty(),
-        .entries.values = dict_values_empty();
-    };
-    return &d;
-}
+static Type * const dict_value_empty[2] = {0};
+#define dict_value_empty() (void *)(dict_value_empty+1)
 
-local const int dict_struct_offset(void)
+static Dict const dict_struct_empty = {
+    .entries.cache  = dict_group_empty(),
+    .entries.kh     = dict_keyhash_empty(), 
+    .entries.values = dict_value_empty()
+#   define dict_struct_empty() &dict_struct_empty
+};
+
+local_inline const int dict_struct_offset(void)
 {
 #  ifndef NO_PyAPI
     static const int i = offsetof(Dict, entries);
@@ -173,13 +163,12 @@ local_inline void
 dict_setcap(Dict *dict,
             const size_t cap,
             const size_t size,
-            const float  lf)
+            const float lf)
 {
     dict->capacity       = cap  | 0;
-    dict->group_capacity = ALIGN(cap / NGROUP);
+    dict->group_capacity = ALIGN(cap / NGROUP, NGROUP);
     dict->max_size       = (lf * cap);
     dict->used_size      = size | 0;
-    dict->lf             = lf   + 0;
 }
 
 local_inline const size_t dict_size(const Dict *dict)
@@ -216,7 +205,7 @@ local_inline const float
 dict_load_fact(const Dict *dict)
 {
     assert(NULL != dict);
-    return (1. * dict->maxsize) / dict->capacity + 5e-4; // TODO: double overflow
+    return (1. * dict->max_size) / dict->capacity + 5e-4; // TODO: double overflow
 }
 
 local_inline int
@@ -296,13 +285,13 @@ dict_realloc(void *dp, size_t n)
 local_inline void dict_free(void *ptr)
 {
 #  ifndef NO_PyAPI
-    ptr = PyMem_Free(ptr);
+    PyMem_Free(ptr);
 #  else
-    ptr = free(ptr);
+    free(ptr);
 #  endif
 }
 
-#define INTPTR(x)    ((uintptr_t)(x))
+#define INTPTR(x)    (uintptr_t)(x)
 #define ALIGNP(x, k) (void *)ALIGNU(x, k)
 
 warn_unused local void *
@@ -332,9 +321,8 @@ local void dict_aligned_free(void *ptr)
     if (ptr == NULL)
         return;
     const short mx = ((short *)ptr)[-1];
-    const void *st = INTPTR(ptr) - mx;
 
-    return free(st);
+    return free((void *)(INTPTR(mx) - mx));
 }
 #undef INTPTR
 #undef ALIGNP
@@ -367,7 +355,7 @@ dict_aligned_mset(const size_t n,
 warn_unused local_inline void *
 dict_cmalloc(void *dp, const size_t n)
 {
-    assert(size != 0);
+    assert(0 != n);
 
     if (check_if_size_add_overflow(n, NGROUP))
         return NULL;
@@ -391,7 +379,7 @@ dict_malloc_self_(void *UNUSED(type), size_t UNUSED(n))
     assert(NULL != type);
     self = (Dict *)(Py_TYPE(type)->tp_alloc(type, 0));
 #  else
-    self = self_malloc(sizeof(Dict));
+    self = dict_malloc(NULL, sizeof(Dict));
 #  endif
 
     if (NULL != self)
@@ -415,30 +403,7 @@ local_inline void *dict_free_self_(void *dp)
 #  else
     dict_free(self);
 #  endif
-
-    dict_unset(dp);
     return NULL;
-}
-
-local_inline int dict_malloc_ckhv(cache_t  **c,
-                                  Type     **v,
-                                  khpair_t **kh)
-{
-    if (NOT dict_cmalloc(c, n))
-        return -1;
-    if (dict_malloc(v,  n * sizeof(Type *)) AND
-        dict_malloc(kh, n * sizeof(khpair_t)))
-    {
-        // store dummy key and value before entries so that (key|value)[-1] returns it (in the case of error) 
-        **v  = *(Type *)dict_value_empty();
-        **kh = *(khpair_t *)dict_key_empty();
-        // move ahead of dummy key and value
-        *v  += 1;
-        *kh += 1;
-        return 0;
-    }
-    dict_free_ckhv(*c, *v, *kh);
-    return -1;
 }
 
 local_inline void dict_free_ckhv(void * restrict c,
@@ -452,7 +417,29 @@ local_inline void dict_free_ckhv(void * restrict c,
         dict_free((khpair_t *)(kh) - 1);
 }
 
-#define DICT_ENT(d) (&(d->entries))
+local_inline int dict_malloc_ckhv(cache_t  **c,
+                                  Type    ***v,
+                                  khpair_t **kh,
+                                  size_t     n)
+{
+    if (NOT dict_cmalloc(c, n))
+        return -1;
+    if (dict_malloc(*v, n * sizeof(Type *)) AND
+        dict_malloc(kh, n * sizeof(khpair_t)))
+    {
+        // store dummy key and value before entries so that (key|value)[-1] returns it (in the case of error) 
+        **v  = dict_value_empty();
+        **kh = dict_keyhash_empty();
+        // move ahead of dummy key and value
+        *v  += 1;
+        *kh += 1;
+        return 0;
+    }
+    dict_free_ckhv(*c, *v, *kh);
+    return -1;
+}
+
+#define DICT_ENT(d) (&((d)->entries))
 
 local_inline void dict_free_ckhv_in_entry(Dict *dict)
 {
@@ -462,6 +449,14 @@ local_inline void dict_free_ckhv_in_entry(Dict *dict)
     entry_t *e = DICT_ENT(dict);
 
     return dict_free_ckhv(e->cache, e->values, e->kh);
+}
+
+
+local_inline int dict_unset(Dict **dict)
+{
+    assert(NULL != dict);
+    *dict = (Dict *)dict_struct_empty();
+    return 0;
 }
 
 local int
@@ -483,26 +478,19 @@ dict_set(Dict **dict,
     n = try_size_requirement(n, sizeof(khpair_t), lf);
     if (0 == n)
         return -1;
-    if (NOT dict_malloc_ckhv(c, v, kh))
+    if (NOT dict_malloc_ckhv(c, v, kh, n))
         return -1;
     dict_setcap(*dict, n, 0, lf);
 
     return 0;
 }
 
-local_inline void dict_unset(Dict **dict)
-{
-    assert(NULL != dict);
-
-    *dict = (Dict *)dict_empty_struct();
-}
-
 local warn_unused int
 dict_map(Dict *dict,
-         const void    *arg,
-         int  (do_fn *)(const Type *key,
-                          const Type *val,
-                          void *arg))
+         void *arg,
+         int  (* do_fn)(const Type *key,
+                        const Type *val,
+                        void *arg))
 {
     assert(NULL != dict);
 
@@ -523,7 +511,7 @@ dict_count_used(Dict *dict, size_t n)
 {    
     if (0 == n)
         return dict_size(dict);
-    if (n >= dict_maxsize(n))
+    if (n >= dict_maxsize(dict))
         return 0;
 
     size_t  k = 0;
@@ -547,19 +535,20 @@ dict_new(void **type, ssize_t n, float lf)
          return dict;
     if (dict_set(&dict, n, lf) != 0)
         return dict_free_self_(dict);
-    return d;
+    return dict;
 }
 
 local void *dict_remove(Dict **dict)
 {
     assert(NULL != dict && NULL != *dict);
-    assert(0 != dict_owned_memory(dict));
+    assert(0 != dict_owned_memory(*dict));
+    Dict *d = *dict;
 
 # ifdef NO_PyAPI
-    if (NULL != (*dict)->clear)
-        dict_map(&alias, NULL, (*dict)->clear);
+    if (NULL != d->clear)
+        dict_map(*dict, NULL, d->clear);
 # else
-    struct visit_t v = *vset_struct(&v, dict, 0);
+    struct visit_t v = *vset_struct(&v, d, 0);
 
     dict_for_each(v)
     {
@@ -567,8 +556,8 @@ local void *dict_remove(Dict **dict)
         Py_DECREF(vget_value(v));
     }
 # endif
-    dict_free_ckhv_in_entry(*dict);
-    dict_free_self_(*dict);
+    dict_free_ckhv_in_entry(d);
+    dict_free_self_(d);
     dict_unset(dict);
     return NULL;
 #   define dict_remove(d) dict_remove(&d)
@@ -582,7 +571,7 @@ dict_copy_insert_n_(Dict * restrict dest,
     size_t  k = n | 0;
     struct visit_t v;
 
-    vset_struct(&v, dict, 0);
+    vset_struct(&v, src, 0);
 
     dict_for_each(v)
     {
@@ -604,7 +593,7 @@ dict_copy_insert_all_(Dict * restrict dest,
 {
     struct visit_t v;
 
-    vset_struct(&v, dict, 0);
+    vset_struct(&v, src, 0);
 
     dict_for_each(v)
     {
@@ -763,7 +752,7 @@ dict_resize(Dict *dict, size_t n)
     return dict_rehash(dict, n);
 }
 
-locale_inline int
+local_inline int
 dict_swapval(Dict *dict, const Type *key, Type *value, size_t j)
 {
     Type *tmp = DICT_ENT(dict)->values[j];
@@ -779,7 +768,7 @@ dict_swapval(Dict *dict, const Type *key, Type *value, size_t j)
     return 0;
 }
 
-locale_inline size_t
+local_inline size_t
 dict_add_entry(Dict *dict,
                Type *restrict key,
                Type *restrict value,
@@ -804,26 +793,26 @@ dict_add_entry(Dict *dict,
 local_inline int
 dict_keycmp(const khpair_t it, const Type *key, const hash_t hash)
 {
-    if (it->hash != hash)
+    if (it.hash != hash)
         return 0;
-    if (it->key == key)
+    if (it.key == key)
         return 1;
 
-    Py_INCREF(it->key); // keep a reference: bad `eq` may attempt to delete key
-    int cmp = PyObject_RichCompareBool(it->key, key, Py_EQ);
-    Py_DECREF(it->key);
+    Py_INCREF(it.key); // keep a reference: bad `eq` may attempt to delete key
+    int cmp = PyObject_RichCompareBool(it.key, key, Py_EQ);
+    Py_DECREF(it.key);
 
     return cmp;
 }
+#if NO_PyAPI
+#   define dict_keycmp(d, i, k, h) dict->cmp((i).key, k)
 #define dict_keycmp(d, i, k, h) dict_keycmp(i, k, h)
 
-//  const size_t group_idx = find_group_from_hash(hash, dict->capacity);
-
 local ssize_t
-dict_lookup_insert_(Dict *         dict,
-                    Type *restrict key,
-                    Type *restrict value,
-                    const hash_t   hash)
+dict_insert(Dict *         dict,
+            Type *restrict key,
+            Type *restrict value,
+            const hash_t   hash)
 {
     assert(NULL != dict);
     assert(NULL != key);
@@ -832,9 +821,9 @@ dict_lookup_insert_(Dict *         dict,
     const  mm_t    dup = mm_duplicate(tag);
     struct visit_t v;
 
-    vset_struct(&v, dict, dict_hash_to_group_idx(hash));
+    vset_struct(&v, dict, 0);
 
-    dict_for_each_p(v)
+    dict_for_each_p(v, hash)
     {
         dict_for_each_mask_p(v, dup)
         {
@@ -847,14 +836,14 @@ dict_lookup_insert_(Dict *         dict,
             }
         }
 
-        mask_t mask = mm_test_empty(vget_group(v));
-        if (LIKELY(mask))
-            return dict_add_entry(dict, key, value, hash, tag, vget_grpidx(v)+mm_scan_mask(mask));
+        mask_t m = mm_test_empty(vget_group(v));
+        if (LIKELY(m))
+            return dict_add_entry(dict, key, value, hash, tag, vget_grpidx(v)+mm_scan_mask(m));
     }
     UNREACHABLE();
 }
 
-locale_inline ssize_t
+local_inline ssize_t
 dict_lookup_insert_deleted_(Dict *         dict,
                             Type *restrict key,
                             Type *restrict value,
@@ -869,9 +858,9 @@ dict_lookup_insert_deleted_(Dict *         dict,
     const  mm_t    dup = mm_duplicate(tag);
     struct visit_t v;
 
-    vset_struct(&v, dict, dict_hash_to_group_idx(hash));
+    vset_struct(&v, dict, 0);
 
-    dict_for_each_p(v)
+    dict_for_each_p(v, hash)
     {
         dict_for_each_mask_p(v, dup)
         {
@@ -884,7 +873,7 @@ dict_lookup_insert_deleted_(Dict *         dict,
             }
         }
 
-        mask_t UNUSED(m) = 0;
+        mask_t m = 0;
         if ((t) AND (m=mm_find_empty_slot(vget_group(v))))
             k=vget_grpidx(v)+mm_scan_mask(m), t=false;
 
@@ -898,7 +887,7 @@ dict_lookup_insert_deleted_(Dict *         dict,
     UNREACHABLE();
 }
 
-locale_inline ssize_t
+local_inline ssize_t
 dict_lookup_generic_(Dict *dict, Type *key, hash_t hash)
 {
     assert(NULL != dict);
@@ -907,9 +896,9 @@ dict_lookup_generic_(Dict *dict, Type *key, hash_t hash)
     const mm_t dup   = mm_duplicate(ctag(hash));
     struct visit_t v;
 
-    vset_struct(&v, dict, dict_hash_to_group_idx(hash));
+    vset_struct(&v, dict, 0);
 
-    dict_for_each_p(v)
+    dict_for_each_p(v, hash)
     {
         dict_for_each_mask_p(v, dup)
         {
@@ -951,4 +940,5 @@ dict_lookup_generic_(Dict *dict, Type *key, hash_t hash)
 #undef probe_next_dict_slot
 #else // QPy_MM_UNSUPPORTED
 #error
+#endif
 #endif
