@@ -5,11 +5,11 @@
 #include <string.h>
 #include <assert.h>
 #include "include/types.h"
-#include "include/mm.h"
 #include "include/visit.h"
 #include "include/defs.h"
+#include "include/arch/mm.h"
 
-#ifndef QPy_MM_UNSUPPORTED
+#if defined(MM_SUPPORT) AND (MM_SUPPORT != 0)
 #define dict_ qpydict_
 #define Dict  QPyDictObject
 
@@ -920,7 +920,7 @@ dict_lookup_generic_(Dict *dict, Type *key, hash_t hash)
 #endif
 
 // remove all macro definitions
-#include "include/cleanup.h"
+#include "include/undef.h"
 #undef PTR
 #undef DPTR
 #undef SHPTR
