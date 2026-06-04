@@ -78,17 +78,9 @@ static inline __forceinline uint64_t BSR(const uint64_t v)
 #    define UNREACHABLE()
 #endif
 
-// enable aligned load on arm (default)
-#if SYSARCH_IS_ARM && !defined(ALIGNED_LOAD)
-#    define ALIGNED_LOAD 1
-#endif
-
 // align to a multiple of d, where d is a power of 2. v is unchange if d already satisfies the alignment
 #define ALIGN(v, d)  ((v)  - ((v) & (d) - 1)) // down
 #define ALIGNU(v, d) (((n) + (d) - 1) & ~((d) - 1)) // up
-
-// set value
-#define SETVAL(lv, rv) ((lv) = (rv))
 
 #if has_builtin(__builtin_add_overflow_p) && has_builtin(__builtin_mul_overflow_p)
 #   define check_if_safe_add(x, y, hint) !__builtin_add_overflow_p(x, y, hint)
@@ -129,32 +121,6 @@ static inline __forceinline uint64_t BSR(const uint64_t v)
 #endif
 #ifndef local_inline
 #    define local_inline static inline force_inline
-#endif
-
-#ifndef NO_PYAPI
-#    define HASH(self, key) (self)->hash(key)
-#    define CMP(self, t, u) (self)->cmp(t, u)
-#else
-#    define HASH(self, key) PyObject_Hash(key)
-#    define CMP(self, t, u) 0
-#endif
-
-// lower threshold of entries that can processed at a time
-#define NGROUP_MIN 8
-// upper threshold of entries that can processed at a time
-#define NGROUP_MAX 32
-// number of entries in a group
-#ifndef NGROUP
-#    define NGROUP NGROUP_MIN
-#endif
-
-// meta-tags used to define the state of an entry as used, deleted or empty 
-#if CACHE_TAG_NOZERO
-#    define DICT_EMPTY 0xff
-#    define DICT_DEL   0x80
-#else
-#    define DICT_EMPTY 0x00
-#    define DICT_DEL   0x80
 #endif
 
 // logging

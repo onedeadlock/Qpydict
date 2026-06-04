@@ -14,15 +14,15 @@
 #define DICT_VNXTSLOT(p, k) ((p) += (k))
 #define DICT_VCALL(mth, v, ...)                  \
     mth((v),                                     \
-        DICT_VAR(j),   DICT_VAR(mask), mm_test_has_entry,\
-        mm_scan_mask,  DICT_VNXT,      DICT_VAR(p),      \
-        DICT_VAR(k),   DICT_VAR(g),    DICT_VSLOT,       \
+        DICT_VAR(j), DICT_VAR(mask), mm_mask_full,\
+        mm_scan,     DICT_VNXT,      DICT_VAR(p),      \
+        DICT_VAR(k), DICT_VAR(g),    DICT_VSLOT,       \
         DICT_VNXTSLOT, __VA_ARGS__                       \
        )
 
 #define DICT_FOR_(v, j, m, cmp, scan, next, ...)   \
     for (size_t j=0; v.i < v.size; next(v.i)) \
-        for (mask_t m=(v.mm=mm_load(v.grp+v.i), cmp(v.mm)); (m) AND (j=scan(m)+v.i); m &= m - 1)
+        for (mask_t m=(v.mm=mm_load(v.grp+v.i), cmp(v.mm)); (m) AND (j=mm_scan(m)+v.i); m &= m - 1)
 
 #define DICT_FOR_MSK_(v, j, m, cmp, _s, next, ...) \
     for (size_t j=0; v.i < v.size; next(v.i))\

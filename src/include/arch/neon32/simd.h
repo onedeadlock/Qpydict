@@ -6,11 +6,15 @@
 #define HAVE_ARM_ARCH_
 #endif
 #if defined(__aarch64__) || defined(__arm__) || HAVE_ARM_ARCH_
+#    if HAVE_ARM_ARCH_ && __ARM_ARCH >= 8 && !defined(NO_NEON64)
+#        define _NEON_32 0 // use neon 64 instead
+#    endif
+#    define _NEON_32 1
 #    include <arm_neon.h>
 #endif
 #undef HAVE_ARM_ARCH_
 
-#ifdef __ARM_NEON
+#if defined(_NEON_32) && _NEON_32 
 #    define MM_SIMD_FLAG   0x35
 #    define MM_NGROUP      8
 #    define MM_KGROUP      3
@@ -18,8 +22,8 @@
 #    define HI_            0x8080808080808080ULL
 
 #    define mm_eq(v, m)    vceq_u8(v, m)
-#    define mm_or(v, m)    vor_u8(v, m)
-#    define mm_xor(v, m)   // TODO
+#    define mm_or(v, m)    vorr_u8(v, m)
+#    define mm_xor(v, m)   veor_u8(v, m)
 #    define mm_and(v, m)   vand_u8(v, m)
 
 #    define mm_dup(v)      vdup_n_u8(v)
