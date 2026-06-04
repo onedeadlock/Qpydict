@@ -428,7 +428,7 @@ local_inline int dict_malloc_ckhv(cache_t  **c,
         dict_malloc(kh, n * sizeof(khpair_t)))
     {
         // store dummy key and value before entries so that (key|value)[-1] returns it (in the case of error) 
-        **v  = dict_value_empty();
+        **v  = dict_value_empty(); // TODO
         **kh = dict_keyhash_empty();
         // move ahead of dummy key and value
         *v  += 1;
@@ -806,7 +806,9 @@ dict_keycmp(const khpair_t it, const Type *key, const hash_t hash)
 }
 #if NO_PyAPI
 #   define dict_keycmp(d, i, k, h) dict->cmp((i).key, k)
-#define dict_keycmp(d, i, k, h) dict_keycmp(i, k, h)
+#else
+#   define dict_keycmp(d, i, k, h) dict_keycmp(i, k, h)
+#endif
 
 local ssize_t
 dict_insert(Dict *         dict,
@@ -818,7 +820,7 @@ dict_insert(Dict *         dict,
     assert(NULL != key);
 
     const  uint8_t tag = ctag(hash);
-    const  mm_t    dup = mm_duplicate(tag);
+    const  mm_t    dup = mm_dup(tag);
     struct visit_t v;
 
     vset_struct(&v, dict, 0);
@@ -836,9 +838,9 @@ dict_insert(Dict *         dict,
             }
         }
 
-        mask_t m = mm_test_empty(vget_group(v));
+        mask_t m = mm_mask_null(vget_group(v));
         if (LIKELY(m))
-            return dict_add_entry(dict, key, value, hash, tag, vget_grpidx(v)+mm_scan_mask(m));
+            return dict_add_entry(dict, key, value, hash, tag, vget_grpidx(v)+mm_scan(m));
     }
     UNREACHABLE();
 }
@@ -855,7 +857,7 @@ dict_lookup_insert_deleted_(Dict *         dict,
     bool    t = true; // true if k is unset
     size_t  k = 0;
     const  uint8_t tag = ctag(hash);
-    const  mm_t    dup = mm_duplicate(tag);
+    const  mm_t    dup = mm_dup(tag);
     struct visit_t v;
 
     vset_struct(&v, dict, 0);
@@ -874,10 +876,10 @@ dict_lookup_insert_deleted_(Dict *         dict,
         }
 
         mask_t m = 0;
-        if ((t) AND (m=mm_find_empty_slot(vget_group(v))))
-            k=vget_grpidx(v)+mm_scan_mask(m), t=false;
+        if ((t) AND (m=mm_mask_del(vget_group(v))))
+            k=vget_grpidx(v)+mm_scan(m), t=false;
 
-        if (mm_test_empty_fast(vget_group(v)))
+        if (mm_null_fast(vget_group(v)))
         {
             if (NOT (t))
                 return dict_add_entry(dict, key, value, hash, tag, k);
@@ -893,7 +895,7 @@ dict_lookup_generic_(Dict *dict, Type *key, hash_t hash)
     assert(NULL != dict);
     assert(NULL != key);
 
-    const mm_t dup   = mm_duplicate(ctag(hash));
+    const mm_t dup   = mm_dup(ctag(hash));
     struct visit_t v;
 
     vset_struct(&v, dict, 0);
@@ -906,7 +908,7 @@ dict_lookup_generic_(Dict *dict, Type *key, hash_t hash)
             int cmp = dict_keycmp(dict, kh, key, hash);
             if (cmp) return cmp;
         }
-        if (mm_test_empty_fast(vget_group(v)))
+        if (mm_null_fast(vget_group(v)))
             return -1;
     }
     UNREACHABLE();
