@@ -841,6 +841,38 @@ dict_keycmp(const khpair_t it, const Type *key, const hash_t hash)
 #   define dict_keycmp(d, i, k, h) dict_keycmp(i, k, h)
 #endif
 
+
+local_inline mask_t dict_mm_dup(const uint8_t tag)
+{
+    return mm_dup(tag);
+}
+
+local_inline mask_t
+dict_mm_slots(const mm_t group, const mm_t mask)
+{
+    return mm_mask(group, mask);
+}
+
+local_inline mask_t dict_mm_null_slot(const mm_t group)
+{
+    return mm_mask_null(mask, dict_Local_null_set);
+}
+
+local_inline bool dict_mm_has_null_slot(const mm_t group)
+{
+    return mm_null_fast(mask, dict_Local_null_set);
+}
+
+local_inline mask_t dict_mm_del_slot(const mm_t group)
+{
+    return mm_mask_null(mask, dict_Local_del_set, dict_Local_null_set);
+}
+
+local_inline uint8_t dict_mm_extract(const mask_t mask)
+{
+    return mm_scan(mask);
+}
+    
 local ssize_t
 dict_insert(Dict *         dict,
             Type *restrict key,
@@ -850,8 +882,8 @@ dict_insert(Dict *         dict,
     assert(NULL != dict);
     assert(NULL != key);
 
-    const  uint8_t tag = ctag(hash);
-    const  mm_t    dup = mm_dup(tag);
+    const  uint8_t tag = dict_slot_tag(hash);
+    const  mm_t    dup = dict_mm_dup(tag);
     struct visit_t v;
 
     vset_struct(&v, dict, 0);
@@ -863,15 +895,13 @@ dict_insert(Dict *         dict,
             khpair_t kh = vget_keyhash(v);
             int cmp = dict_keycmp(dict, kh, key, hash);
             if (cmp) {
-                if (UNLIKELY(cmp < 0))
-                    return -1;
+                if (cmp < 0) return -1;
                 return dict_swapval(dict, key, value, vget_idx(v));
             }
         }
 
-        mask_t m = mm_mask_null(vget_group(v));
-        if (LIKELY(m))
-            return dict_add_entry(dict, key, value, hash, tag, vget_grpidx(v)+mm_scan(m));
+        mask_t m = dict_mm_null_slot(vget_group(v));
+        if (m) return dict_add_entry(dict, key, value, hash, tag, vget_grpidx(v)+dict_mm_extract(m));
     }
     UNREACHABLE();
 }
@@ -887,8 +917,8 @@ dict_lookup_insert_deleted_(Dict *         dict,
 
     bool    t = true; // true if k is unset
     size_t  k = 0;
-    const  uint8_t tag = ctag(hash);
-    const  mm_t    dup = mm_dup(tag);
+    const  uint8_t tag = dict_slot_tag(hash);
+    const  mm_t    dup = dict_mm_dup(tag);
     struct visit_t v;
 
     vset_struct(&v, dict, 0);
@@ -900,17 +930,16 @@ dict_lookup_insert_deleted_(Dict *         dict,
             khpair_t kh = vget_keyhash(v);
             int cmp = dict_keycmp(dict, kh, key, hash);
             if (cmp) {
-                if (UNLIKELY(cmp < 0))
-                    return -1;
+                if (cmp < 0) return -1;
                 return dict_swapval(dict, key, value, vget_idx(v));
             }
         }
 
         mask_t m = 0;
-        if ((t) AND (m=mm_mask_del(vget_group(v))))
-            k=vget_grpidx(v)+mm_scan(m), t=false;
+        if ((t) AND (m=dict_mm_del_slot(vget_group(v))))
+            k=vget_grpidx(v)+dict_mm_extract(m), t=false;
 
-        if (mm_null_fast(vget_group(v)))
+        if (dict_mm_has_null_slot(vget_group(v)))
         {
             if (NOT (t))
                 return dict_add_entry(dict, key, value, hash, tag, k);
@@ -926,7 +955,7 @@ dict_lookup_generic_(Dict *dict, Type *key, hash_t hash)
     assert(NULL != dict);
     assert(NULL != key);
 
-    const mm_t dup   = mm_dup(ctag(hash));
+    const mm_t dup   = dict_mm_dup(dict_slot_tag(hash));
     struct visit_t v;
 
     vset_struct(&v, dict, 0);
@@ -939,7 +968,7 @@ dict_lookup_generic_(Dict *dict, Type *key, hash_t hash)
             int cmp = dict_keycmp(dict, kh, key, hash);
             if (cmp) return cmp;
         }
-        if (mm_null_fast(vget_group(v)))
+        if (dict_mm_has_null_slot(vget_group(v)))
             return -1;
     }
     UNREACHABLE();
