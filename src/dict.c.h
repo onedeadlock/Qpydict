@@ -116,27 +116,20 @@ advice_size_requirement(const size_t size, const float lf)
     return size_no_resize(size, lf);
 }
 
-static cache_t const
-dict_group_empty[NGROUP_MAX] = {
+local cache_t const dict_Local_null_group[NGROUP_MAX] = {
 #   define y8(y) y, y, y, y, y, y, y, y
     y8(DICT_EMPTY), y8(DICT_EMPTY),
     y8(DICT_EMPTY), y8(DICT_EMPTY)
 #   undef y8
-#   define dict_group_empty() (void *)&dict_group_empty
 };
 
-static khpair_t const
-dict_keyhash_empty[2] = {0};
-#define dict_keyhash_empty() (void *)(dict_keyhash_empty+1)
+local khpair_t const dict_Local_null_key[2] = {0};
+local Type *   const dict_Local_null_val[2] = {0};
 
-static Type * const dict_value_empty[2] = {0};
-#define dict_value_empty() (void *)(dict_value_empty+1)
-
-static Dict const dict_struct_empty = {
-    .entries.cache  = dict_group_empty(),
-    .entries.kh     = dict_keyhash_empty(), 
-    .entries.values = dict_value_empty()
-#   define dict_struct_empty() &dict_struct_empty
+static Dict const dict_Local_null_Dict = {
+    .entries.cache   = &dict_Local_null_group,
+    .entries.key     = dict_Local_null_key + 1, 
+    .entries.values  = dict_Local_null_val + 1
 };
 
 local_inline const int dict_struct_offset(void)
@@ -340,7 +333,7 @@ dict_aligned_calloc(const size_t n,
 }
 
 warn_unused local_inline void *
-dict_aligned_mset(const size_t n,
+dict_memset_alloc(const size_t n,
                   const short  k,
                   const int    c)
 {
@@ -428,8 +421,8 @@ local_inline int dict_malloc_ckhv(cache_t  **c,
         dict_malloc(kh, n * sizeof(khpair_t)))
     {
         // store dummy key and value before entries so that (key|value)[-1] returns it (in the case of error) 
-        **v  = dict_value_empty(); // TODO
-        **kh = dict_keyhash_empty();
+        **v  = dict_Local_null_val; // TODO
+        **kh = dict_Local_null_key;
         // move ahead of dummy key and value
         *v  += 1;
         *kh += 1;
@@ -439,14 +432,14 @@ local_inline int dict_malloc_ckhv(cache_t  **c,
     return -1;
 }
 
-#define DICT_ENT(d) (&((d)->entries))
+#define DICT_ENTRY(d) (&((d)->entries))
 
 local_inline void dict_free_ckhv_in_entry(Dict *dict)
 {
     assert(NULL != dict);
     if (0 != dict_owned_memory(dict))
         return;
-    entry_t *e = DICT_ENT(dict);
+    entry_t *e = DICT_ENTRY(dict);
 
     return dict_free_ckhv(e->cache, e->values, e->kh);
 }
@@ -467,7 +460,7 @@ dict_set(Dict **dict,
     assert(NULL != dict AND NULL != *dict);
     assert(0 != dict_owned_memory(*dict));
 
-    entry_t *e = DICT_ENT(*dict);
+    entry_t *e = DICT_ENTRY(*dict);
     void   *kh = &(e->kh), *v = &(e->values), *c = &(e->cache);
 
     if (out_of_range_lf(lf))
@@ -525,10 +518,41 @@ dict_count_used(Dict *dict, size_t n)
     return k;
 }
 
+local mm_t dict_Local_null_set;
+local mm_t dict_Local_full_set;
+
+local PyObject *dict_Local_Py_addnote = NULL;
+local PyObject *dict_Local_Py_key     = NULL;
+
+local_inline void
+dict_set_Local(void)
+{
+    dict_Local_null_set = mm_set_null();
+    dict_Local_full_set = mm_set_full();
+
+    // make read-only
+#   define dict_Local_null_set (true, dict_Local_null_set)
+#   define dict_Local_full_set (true, dict_Local_full_set)
+
+#ifndef NO_PyAPI
+    dict_Local_Py_addnote = PyUnicode_FromString("add_note");
+    dict_Local_Py_key     = PyUnicode_FromString("keys");
+
+    // make read-only
+#   define dict_Local_Py_addnote  (true, dict_Local_Py_addnote)
+#   define dict_Local_Py_key      (true, dict_Local_Py_key)
+#endif
+}
+
 warn_unused local void *
 dict_new(void **type, ssize_t n, float lf)
 {
     Dict *dict = NULL;
+    static bool set = true;
+
+    if (true == set)
+        dict_set_Local();
+    set = false; // set once
 
     dict = dict_malloc_self_(type, 0);
     if (NULL == dict)
@@ -788,6 +812,13 @@ dict_add_entry(Dict *dict,
 
     inc_entry_size(dict);
     return 0;
+}
+
+local int dict_sentinel_cmp(Type *UNUSED(v), Type *UNUSED(u))
+{
+    LOG("cmp is not set");
+
+    return -1;
 }
 
 local_inline int

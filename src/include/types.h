@@ -62,16 +62,20 @@ typedef struct
     PyObject_HEAD
 #endif
     entry_t   entries;
+
 #ifdef NO_PYAPI
-    hashfunc_t  hash;
-    cmpfunc_t   cmp;
-    clearfunc_t clear;
+    hash_t (* hash )(Type *key);
+    void   (* clear)(Type *key, Type *value, void *arg);
 #endif
+    int    (* cmp  )(Type *t, Type *u);
+
     size_t  capacity;
     size_t  group_capacity;
     size_t  used_size; // number of put entries
     size_t  max_size;   // maximum size, no resize
+
     uint8_t flags; // internal use only (key kind, malloc)
 } QPyDictObject;
 
+#endif
 #endif // QPy_TYPES_H
