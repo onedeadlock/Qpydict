@@ -124,33 +124,13 @@ local cache_t const dict_Local_null_group[NGROUP_MAX] = {
 };
 
 local khpair_t const dict_Local_null_key[2] = {0};
-local Type *   const dict_Local_null_val[2] = {0};
+local Type    const dict_Local_null_val[2] = {0};
 
 static Dict const dict_Local_null_Dict = {
     .entries.cache   = &dict_Local_null_group,
     .entries.key     = dict_Local_null_key + 1, 
     .entries.values  = dict_Local_null_val + 1
 };
-
-local_inline const int dict_struct_offset(void)
-{
-#  ifndef NO_PyAPI
-    static const int i = offsetof(Dict, entries);
-#  else
-    static const int i = 0;
-#  endif
-    return i;
-}
-
-local_inline const int dict_struct_size(void)
-{
-#  ifndef NO_PyAPI
-    static const int i = sizeof(Dict) - offsetof(Dict, entries);
-#  else
-    static const int i = sizeof(Dict);
-#  endif
-    return i;
-}
 
 local_inline void
 dict_setcap(Dict *dict,
@@ -405,31 +385,32 @@ local_inline void dict_free_ckhv(void * restrict c,
 {
     dict_cfree(c);
     if (NULL != v)
-        dict_free((Type **)(v) - 1);
+        dict_free((Type *)(v) - 1);
     if (NULL != kh)
         dict_free((khpair_t *)(kh) - 1);
 }
 
 local_inline int dict_malloc_ckhv(cache_t  **c,
-                                  Type    ***v,
+                                  Type     **v,
                                   khpair_t **kh,
                                   size_t     n)
 {
     if (NOT dict_cmalloc(c, n))
         return -1;
-    if (dict_malloc(*v, n * sizeof(Type *)) AND
-        dict_malloc(kh, n * sizeof(khpair_t)))
+    if (NOT dict_malloc(*v, n * sizeof(Type )) OR
+        NOT dict_malloc(kh, n * sizeof(khpair_t)))
     {
-        // store dummy key and value before entries so that (key|value)[-1] returns it (in the case of error) 
-        **v  = dict_Local_null_val; // TODO
-        **kh = dict_Local_null_key;
-        // move ahead of dummy key and value
-        *v  += 1;
-        *kh += 1;
-        return 0;
+        dict_cfree(c), dict_free(v), dict_free(kh);
+        return -1;
     }
-    dict_free_ckhv(*c, *v, *kh);
-    return -1;
+    // store dummy key and value before entries so that (key|value)[-1] returns it (in the case of error) 
+    **v  = dict_Local_null_val; // TODO
+    **kh = dict_Local_null_key;
+    // move ahead of dummy key and value
+    *v  += 1;
+    *kh += 1;
+
+    return 0;
 }
 
 #define DICT_ENTRY(d) (&((d)->entries))
@@ -481,8 +462,8 @@ dict_set(Dict **dict,
 local warn_unused int
 dict_map(Dict *dict,
          void *arg,
-         int  (* do_fn)(const Type *key,
-                        const Type *val,
+         int  (* do_fn)(const Type key,
+                        const Type val,
                         void *arg))
 {
     assert(NULL != dict);
@@ -520,6 +501,7 @@ dict_count_used(Dict *dict, size_t n)
 
 local mm_t dict_Local_null_set;
 local mm_t dict_Local_full_set;
+local mm_t dict_Local_del_set;
 
 local PyObject *dict_Local_Py_addnote = NULL;
 local PyObject *dict_Local_Py_key     = NULL;
@@ -529,10 +511,12 @@ dict_set_Local(void)
 {
     dict_Local_null_set = mm_set_null();
     dict_Local_full_set = mm_set_full();
+    dict_Local_del_set  = mm_set_del();
 
     // make read-only
 #   define dict_Local_null_set (true, dict_Local_null_set)
 #   define dict_Local_full_set (true, dict_Local_full_set)
+#   define dict_Local_del_set  (true, dict_Local_del_set)
 
 #ifndef NO_PyAPI
     dict_Local_Py_addnote = PyUnicode_FromString("add_note");
@@ -553,6 +537,9 @@ dict_new(void **type, ssize_t n, float lf)
     if (true == set)
         dict_set_Local();
     set = false; // set once
+
+    if (NOT n)
+        return &dict_Local_null_Dict;
 
     dict = dict_malloc_self_(type, 0);
     if (NULL == dict)
@@ -600,7 +587,7 @@ dict_copy_insert_n_(Dict * restrict dest,
     dict_for_each(v)
     {
         khpair_t kh  = vget_keyhash(v);
-        Type *   val = vget_value(v);
+        Type    val = vget_value(v);
 
         if (dict_insert(dest, kh.key, val, kh.hash))
             return NULL;
@@ -622,7 +609,7 @@ dict_copy_insert_all_(Dict * restrict dest,
     dict_for_each(v)
     {
         khpair_t kh  = vget_keyhash(v);
-        Type *   val = vget_value(v);
+        Type    val = vget_value(v);
 
         if (dict_insert(dest, kh.key, val, kh.hash))
             return NULL;
@@ -777,9 +764,9 @@ dict_resize(Dict *dict, size_t n)
 }
 
 local_inline int
-dict_swapval(Dict *dict, const Type *key, Type *value, size_t j)
+dict_swapval(Dict *dict, const Type key, Type value, size_t j)
 {
-    Type *tmp = DICT_ENT(dict)->values[j];
+    Type tmp = DICT_ENT(dict)->values[j];
 
     DICT_ENT(dict)->values[j] = value;
 #   ifndef NO_PyAPI
@@ -794,8 +781,8 @@ dict_swapval(Dict *dict, const Type *key, Type *value, size_t j)
 
 local_inline size_t
 dict_add_entry(Dict *dict,
-               Type *restrict key,
-               Type *restrict value,
+               Type restrict key,
+               Type restrict value,
                hash_t  hash,
                size_t tag,
                size_t j)
@@ -814,15 +801,16 @@ dict_add_entry(Dict *dict,
     return 0;
 }
 
-local int dict_sentinel_cmp(Type *UNUSED(v), Type *UNUSED(u))
+local int dict_sentinel_cmp(Type UNUSED(v), Type UNUSED(u))
 {
-    LOG("cmp is not set");
+    LOG("%s", "cmp is not set");
 
     return -1;
 }
 
+#ifndef NO_PyAPI
 local_inline int
-dict_keycmp(const khpair_t it, const Type *key, const hash_t hash)
+dict_keycmp(const khpair_t it, const Type key, const hash_t hash)
 {
     if (it.hash != hash)
         return 0;
@@ -835,10 +823,9 @@ dict_keycmp(const khpair_t it, const Type *key, const hash_t hash)
 
     return cmp;
 }
-#if NO_PyAPI
-#   define dict_keycmp(d, i, k, h) dict->cmp((i).key, k)
+#   define dict_keycmp(d, kh, j, h) dict_keycmp(kh, j, h)
 #else
-#   define dict_keycmp(d, i, k, h) dict_keycmp(i, k, h)
+#   define dict_keycmp(d, kh, j, h) dict->cmp((kh).key, k)
 #endif
 
 
@@ -874,10 +861,7 @@ local_inline uint8_t dict_mm_extract(const mask_t mask)
 }
     
 local ssize_t
-dict_insert(Dict *         dict,
-            Type *restrict key,
-            Type *restrict value,
-            const hash_t   hash)
+dict_insert(Dict *dict, Type key, Type value, const hash_t hash)
 {
     assert(NULL != dict);
     assert(NULL != key);
@@ -907,10 +891,7 @@ dict_insert(Dict *         dict,
 }
 
 local_inline ssize_t
-dict_lookup_insert_deleted_(Dict *         dict,
-                            Type *restrict key,
-                            Type *restrict value,
-                            const hash_t   hash)
+dict_insert_deleted(Dict *dict, Type key, Type value, const hash_t hash)
 {
     assert(NULL != dict);
     assert(NULL != key);
@@ -950,7 +931,7 @@ dict_lookup_insert_deleted_(Dict *         dict,
 }
 
 local_inline ssize_t
-dict_lookup_generic_(Dict *dict, Type *key, hash_t hash)
+dict_lookup(Dict *dict, Type key, hash_t hash)
 {
     assert(NULL != dict);
     assert(NULL != key);

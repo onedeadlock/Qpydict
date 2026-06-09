@@ -30,9 +30,11 @@
 #    if   MM_AVX == MM_SIMD_FLAG // using AVX
 typedef uint32_t mask_t;
 typedef __m256i  mm_t;
+
 #    elif MM_SSE == MM_SIMD_FLAG // using SSE2
 typedef uint16_t mask_t;
 typedef __m128i  mm_t;
+
 #    elif MM_NEON == MM_SIMD_FLAG // using neon 32bit
 typedef uint64_t  mask_t;
 typedef uint8x8_t mm_t;
@@ -41,6 +43,7 @@ typedef uint8x8_t mm_t;
 #            undef  MM_SUPPORT
 #            define MM_SUPPORT 0
 #        endif
+
 #    elif MM_NEON64 == MM_SIMD_FLAG // using neon 64bit
 typedef uint16_t   mask_t;
 typedef uint8x16_t mm_t;
@@ -52,6 +55,5 @@ typedef uint64_t mm_t;
 
 // scan bitmask from mm_mask*
 #define mm_scan(v) MM_KGET(BSR(v))
-
 #endif
 #endif // MM_SIMD_H
