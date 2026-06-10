@@ -45,22 +45,6 @@
 #define out_of_range_lf(lf) ((lf) < .3 OR(lf) > 1.)
 #define inc_entry_size(d)   ++((d)->used_size)
 
-#ifndef CACHE_TAG_NOZERO
-local_inline int PURE(ctag)(const uint64_t v)
-{
-    return ((v & 0xff) - ((v & 0xff) * 0x2041u >> 20) * 127) + 1;
-}
-#else
-#define ctag(v) ((v) & 0xff)
-#endif
-
-local_inline size_t
-PURE(find_group_from_hash)(const hash_t hash,
-                           const size_t size)
-{
-    return ALIGN(hash & (size - 1), NGROUP) / NGROUP;
-}
-
 local_inline size_t next_power_of_two(size_t n)
 {
     assert(n != 0);
@@ -124,7 +108,7 @@ local cache_t const dict_Local_null_group[NGROUP_MAX] = {
 };
 
 local khpair_t const dict_Local_null_key[2] = {0};
-local Type    const dict_Local_null_val[2] = {0};
+local Type     const dict_Local_null_val[2] = {0};
 
 static Dict const dict_Local_null_Dict = {
     .entries.cache   = &dict_Local_null_group,
@@ -132,16 +116,77 @@ static Dict const dict_Local_null_Dict = {
     .entries.values  = dict_Local_null_val + 1
 };
 
+local mm_t dict_Local_null_set;
+local mm_t dict_Local_del_set;
+
+local PyObject *dict_Local_Py_addnote = NULL;
+local PyObject *dict_Local_Py_key     = NULL;
+
 local_inline void
-dict_setcap(Dict *dict,
-            const size_t cap,
-            const size_t size,
-            const float lf)
+dict_set_Local(void)
 {
-    dict->capacity       = cap  | 0;
-    dict->group_capacity = ALIGN(cap / NGROUP, NGROUP);
-    dict->max_size       = (lf * cap);
-    dict->used_size      = size | 0;
+    dict_Local_null_set = mm_set_null();
+    dict_Local_del_set  = mm_set_del();
+
+    // make read-only
+#   define dict_Local_null_set (true, dict_Local_null_set)
+#   define dict_Local_del_set  (true, dict_Local_del_set)
+
+#ifndef NO_PyAPI
+    dict_Local_Py_addnote = PyUnicode_FromString("add_note");
+    dict_Local_Py_key     = PyUnicode_FromString("keys");
+
+    // make read-only
+#   define dict_Local_Py_addnote  (true, dict_Local_Py_addnote)
+#   define dict_Local_Py_key      (true, dict_Local_Py_key)
+#endif
+}
+
+#ifdef MM_ZERO
+local_inline const uint8_t get_tag(const uint64_t v)
+{
+    const uint16_t x = v & 0xff;
+
+    return (x - (x * 0x2041u >> 20) * 0x7f) + 1;
+}
+#else
+#   define get_tag(v) ((v) & 0xff)
+#endif
+
+const local_inline mm_t dup_tag(const uint8_t tag)
+{
+    return mm_dup(tag);
+}
+
+local_inline mask_t load_group(const void *v)
+{
+    return mm_mask_null(v, dict_Local_null_set);
+}
+
+local_inline mask_t
+cmp_group(const mm_t group, const mm_t mask)
+{
+    return mm_mask(group, mask);
+}
+
+local_inline mask_t cmp_null(const mm_t group)
+{
+    return mm_mask_null(group, dict_Local_null_set);
+}
+
+const local_inline bool has_null(const mm_t group)
+{
+    return mm_null_fast(group, dict_Local_null_set);
+}
+
+local_inline mask_t cmp_full(const mm_t group)
+{
+    return mm_mask_full(group, dict_Local_del_set, dict_Local_null_set);
+}
+
+const local_inline uint8_t bsr(const mask_t mask)
+{
+    return mm_scan(mask);
 }
 
 local_inline const size_t dict_size(const Dict *dict)
@@ -160,6 +205,24 @@ local_inline const size_t dict_capacity(const Dict *dict)
 {
     assert(NULL != dict);
     return dict->capacity;
+}
+
+local_inline const void * dict_khpairs(const Dict *dict)
+{
+    assert(NULL != dict);
+    return dict->entries.kh;
+}
+
+local_inline const void * dict_cache(const Dict *dict)
+{
+    assert(NULL != dict);
+    return dict->entries.cache;
+}
+
+local_inline const void * dict_values(const Dict *dict)
+{
+    assert(NULL != dict);
+    return dict->entries.values;
 }
 
 local_inline int dict_isempty(const Dict *dict)
@@ -207,6 +270,15 @@ local_inline void dict_set_owned_memory(Dict *dict)
     assert(NULL != dict);
 
     dict->flags |= 0x80;
+}
+
+local_inline void
+dict_setcap(Dict *dict, size_t cap, size_t size, float lf)
+{
+    dict->capacity       = cap;
+    dict->group_capacity = ALIGN(cap / NGROUP, NGROUP);
+    dict->max_size       = lf * cap;
+    dict->used_size      = size;
 }
 
 local_inline const int dict_owned_memory(const Dict *dict)
@@ -413,18 +485,17 @@ local_inline int dict_malloc_ckhv(cache_t  **c,
     return 0;
 }
 
-#define DICT_ENTRY(d) (&((d)->entries))
+#define DICT_ENTRYRY(d) (&((d)->entries))
 
 local_inline void dict_free_ckhv_in_entry(Dict *dict)
 {
     assert(NULL != dict);
     if (0 != dict_owned_memory(dict))
         return;
-    entry_t *e = DICT_ENTRY(dict);
+    entry_t *e = DICT_ENTRYRY(dict);
 
     return dict_free_ckhv(e->cache, e->values, e->kh);
 }
-
 
 local_inline int dict_unset(Dict **dict)
 {
@@ -441,7 +512,7 @@ dict_set(Dict **dict,
     assert(NULL != dict AND NULL != *dict);
     assert(0 != dict_owned_memory(*dict));
 
-    entry_t *e = DICT_ENTRY(*dict);
+    entry_t *e = DICT_ENTRYRY(*dict);
     void   *kh = &(e->kh), *v = &(e->values), *c = &(e->cache);
 
     if (out_of_range_lf(lf))
@@ -468,64 +539,37 @@ dict_map(Dict *dict,
 {
     assert(NULL != dict);
 
-    struct visit_t v;
+    const Type    khp = dict_khpairs(dict);
+    const Type    vp  = dict_values(dict);
+    const cache_t grp = dict_cache(dict);
+    
+    const size_t n = dict_capacity(dict);
 
-    vset_struct(&v, dict, 0);
-
-    dict_for_each(v)
-    {
-        if (do_fn(vget_key(v), vget_value(v), arg))
-            return -1;
-    }
+    for (size_t j, i=0; i < n; i+=DICT_N_GROUP)
+        for (mask_t m = mask_t m = cmp_full(load_group(grp + i)); m; m &= m - 1)
+        {
+            j = i + bsr(m);
+            if (do_fn(khp[j].key, vp[j], arg))
+                return -1;
+        }
     return 0;
 }
 
 local_inline size_t
 dict_count_used(Dict *dict, size_t n)
-{    
+{
+    assert(n > dict_capacity(dict));
     if (0 == n)
         return dict_size(dict);
-    if (n >= dict_maxsize(dict))
-        return 0;
 
-    size_t  k = 0;
-    struct visit_t v = *vset_struct(&v, dict, n);
+    size_t k = 0, j = n; // TODO: align (n)
 
-    dict_for_each_mask(v)
+    for (size_t i=0; i < j; i+=DICT_N_GROUP)
     {
-        k += POPCNT(vget_mask(v));
-        vset_next(v);
+        mask_t m  = cmp_full(load_group(grp + i));
+        if (m) k += popcnt(m); // TODO
     }
     return k;
-}
-
-local mm_t dict_Local_null_set;
-local mm_t dict_Local_full_set;
-local mm_t dict_Local_del_set;
-
-local PyObject *dict_Local_Py_addnote = NULL;
-local PyObject *dict_Local_Py_key     = NULL;
-
-local_inline void
-dict_set_Local(void)
-{
-    dict_Local_null_set = mm_set_null();
-    dict_Local_full_set = mm_set_full();
-    dict_Local_del_set  = mm_set_del();
-
-    // make read-only
-#   define dict_Local_null_set (true, dict_Local_null_set)
-#   define dict_Local_full_set (true, dict_Local_full_set)
-#   define dict_Local_del_set  (true, dict_Local_del_set)
-
-#ifndef NO_PyAPI
-    dict_Local_Py_addnote = PyUnicode_FromString("add_note");
-    dict_Local_Py_key     = PyUnicode_FromString("keys");
-
-    // make read-only
-#   define dict_Local_Py_addnote  (true, dict_Local_Py_addnote)
-#   define dict_Local_Py_key      (true, dict_Local_Py_key)
-#endif
 }
 
 warn_unused local void *
@@ -549,27 +593,41 @@ dict_new(void **type, ssize_t n, float lf)
     return dict;
 }
 
+
+local_inline void dict_Py_release_kv_ref(Dict *dict)
+{
+    const cache_t grp = dict_cache(dict);
+    const size_t  n   = dict_capacity(dict);
+    
+    for (size_t j, i=0; i < n; i+=DICT_N_GROUP)
+        for (mask_t m = mask_t m = cmp_full(load_group(grp + i)); m; m &= m - 1)
+        {
+            j = i + bsr(m);
+            khpair_t k = DICT_ENTRYRY(dict)->kh[j].key;
+            Type     v = DICT_ENTRYRY(dict)->values[j];;
+
+            Py_DECREF(k);
+            Py_DECREF(v);
+        }
+}
+
 local void *dict_remove(Dict **dict)
 {
     assert(NULL != dict && NULL != *dict);
     assert(0 != dict_owned_memory(*dict));
+
     Dict *d = *dict;
 
 # ifdef NO_PyAPI
     if (NULL != d->clear)
         dict_map(*dict, NULL, d->clear);
 # else
-    struct visit_t v = *vset_struct(&v, d, 0);
-
-    dict_for_each(v)
-    {
-        Py_DECREF(vget_key(v));
-        Py_DECREF(vget_value(v));
-    }
+    dict_Py_release_kv_ref(dict);
 # endif
     dict_free_ckhv_in_entry(d);
     dict_free_self_(d);
     dict_unset(dict);
+
     return NULL;
 #   define dict_remove(d) dict_remove(&d)
 }
@@ -579,21 +637,22 @@ dict_copy_insert_n_(Dict * restrict dest,
                     const Dict * restrict src,
                     const size_t n)
 {
-    size_t  k = n | 0;
-    struct visit_t v;
+    const Type    khp = dict_khpairs(dict);
+    const Type    vp  = dict_values(dict);
+    const cache_t grp = dict_cache(dict);
 
-    vset_struct(&v, src, 0);
+    for (size_t j, k=n, i=0; i < n; i+=DICT_N_GROUP) // TODO: align(n)
+        for (mask_t m = mask_t m = cmp_full(load_group(grp + i)); m; m &= m - 1)
+        {
+            j = i + bsr(m);
+            khpair_t kh = khp[j];
+            Type     v  = vp[j];
 
-    dict_for_each(v)
-    {
-        khpair_t kh  = vget_keyhash(v);
-        Type    val = vget_value(v);
-
-        if (dict_insert(dest, kh.key, val, kh.hash))
-            return NULL;
-        if (NOT --k)
-            goto ret;
-    }
+            if (dict_insert(dest, kh.key, v, kh.hash))
+                return NULL;
+            if (NOT --k)
+                goto ret; 
+        }
  ret:
     return dict_set_size(dest, n - k), dest;
 }
@@ -602,19 +661,21 @@ local_inline void *
 dict_copy_insert_all_(Dict * restrict dest,
                       const Dict * restrict src)
 {
-    struct visit_t v;
+    const Type    khp = dict_khpairs(dict);
+    const Type    vp  = dict_values(dict);
+    const cache_t grp = dict_cache(dict);
 
-    vset_struct(&v, src, 0);
+    const size_t n = dict_capacity(dict);
+    for (size_t j, k=n, i=0; i < n; i+=DICT_N_GROUP) // TODO: align(n)
+        for (mask_t m = mask_t m = cmp_full(load_group(grp + i)); m; m &= m - 1)
+        {
+            j = i + bsr(m);
+            khpair_t kh = khp[j];
+            Type     v  = vp[j];
 
-    dict_for_each(v)
-    {
-        khpair_t kh  = vget_keyhash(v);
-        Type    val = vget_value(v);
-
-        if (dict_insert(dest, kh.key, val, kh.hash))
-            return NULL;
-    }
-    return dict_set_size(dest, dict_size(src)), dest;
+            if (dict_insert(dest, kh.key, v, kh.hash))
+                return NULL;
+        }
 }
 
 #define DICT_NEW NULL
@@ -766,9 +827,9 @@ dict_resize(Dict *dict, size_t n)
 local_inline int
 dict_swapval(Dict *dict, const Type key, Type value, size_t j)
 {
-    Type tmp = DICT_ENT(dict)->values[j];
+    Type tmp = DICT_ENTRYRY(dict)->values[j];
 
-    DICT_ENT(dict)->values[j] = value;
+    DICT_ENTRY(dict)->values[j] = value;
 #   ifndef NO_PyAPI
     Py_XDECREF(tmp);
     Py_XDECREF(key); // key already exist
@@ -780,14 +841,14 @@ dict_swapval(Dict *dict, const Type key, Type value, size_t j)
 }
 
 local_inline size_t
-dict_add_entry(Dict *dict,
-               Type restrict key,
-               Type restrict value,
-               hash_t  hash,
-               size_t tag,
-               size_t j)
+dict_add(Dict *dict,
+         Type restrict key,
+         Type restrict value,
+         hash_t  hash,
+         size_t tag,
+         size_t j)
 {
-    entry_t *e = DICT_ENT(dict);
+    entry_t *e = DICT_ENTRY(dict);
 
     assert(NULL == e->values[j]);
     assert(NULL == e->kh[j].key);
@@ -828,129 +889,114 @@ dict_keycmp(const khpair_t it, const Type key, const hash_t hash)
 #   define dict_keycmp(d, kh, j, h) dict->cmp((kh).key, k)
 #endif
 
-
-local_inline mask_t dict_mm_dup(const uint8_t tag)
+local_inline ssize_t
+dict_insert(Dict *dict, Type key, Type val, hash_t h)
 {
-    return mm_dup(tag);
+    assert(NULL != dict);
+    assert(NULL != key);
+
+    const Type    khp = dict_khpairs(dict); // key array
+    const cache_t grp = dict_cache(dict); // cache array
+
+    const size_t  g   = dict_capacity(dict) - 1;
+    const uint8_t t   = get_tag(h); // tag
+    const mm_t    txn = dup_tag(t); // tag x NGROUP
+
+    for (size_t p=0, n=0, i=(h & g); true; i=(h + p & g))
+    {
+        const mm_t   v = load_group(grp + i);
+        auto  mask_t m = cmp_group(v, txn); // matched tags
+        for (int j; (m); m &= m - 1)
+        {
+            j = i + bsr(m);
+            khpair_t kh = khp[j];
+            int cmp = dict_keycmp(dict, kh, key, h);
+            if (cmp)
+            {
+                if (cmp < 0)
+                    return -1;
+                return dict_swapval(dict, key, val, j);
+            }
+            m = cmp_null(v);
+            if (m)
+                return dict_add(dict, key, val, h, t, i + bsr(m));
+            p += n; // probe next slot
+            n += DICT_N_GROUP;
+        }
+    UNREACHABLE();
 }
 
-local_inline mask_t
-dict_mm_slots(const mm_t group, const mm_t mask)
+local_inline ssize_t
+dict_insert_deleted(Dict *dict, Type key, Type val, hash_t h)
 {
-    return mm_mask(group, mask);
+    assert(NULL != dict);
+    assert(NULL != key);
+
+    bool    f = true; // true if k is unset
+    size_t  k = 0; // cache empty or deleted slot index
+
+    const Type    khp = dict_khpairs(dict);
+    const cache_t grp = dict_cache(dict);
+
+    const size_t  g   = dict_capacity(dict) - 1;
+    const uint8_t t   = get_tag(h);
+    const mm_t    txn = dup_tag(t);
+
+    for (size_t p=0, n=0, i=(h & g); true; i=(h + p & g))
+    {
+        const mm_t   v = load_group(grp + i);
+        auto  mask_t m = cmp_group(v, txn);
+        for (int j; (m); m &= m - 1)
+        {
+            j = i + bsr(m);
+            khpair_t kh = khp[j];
+            int cmp = dict_keycmp(dict, kh, key, h);
+            if (cmp)
+            {
+                if (cmp < 0)
+                    return -1;
+                return dict_swapval(dict, key, val, j);
+            }
+            if (true == f AND (m=cmp_deleted(v)))
+                k = i + bsr(m); f=false;
+            if (has_null(v))
+            {
+                if (false == f)
+                    return dict_add(dict, key, val, h, t, k);
+                return -1;
+            }
+            p += n;
+            n += DICT_N_GROUP;
+        }
+    UNREACHABLE();
 }
 
-local_inline mask_t dict_mm_null_slot(const mm_t group)
+local_inline ssize_t
+dict_lookup(Dict *dict, Type key, hash_t h)
 {
-    return mm_mask_null(mask, dict_Local_null_set);
-}
+    assert(NULL != dict);
+    assert(NULL != key);
 
-local_inline bool dict_mm_has_null_slot(const mm_t group)
-{
-    return mm_null_fast(mask, dict_Local_null_set);
-}
+    const Type    khp = dict_khpairs(dict);
+    const cache_t grp = dict_cache(dict);
 
-local_inline mask_t dict_mm_del_slot(const mm_t group)
-{
-    return mm_mask_null(mask, dict_Local_del_set, dict_Local_null_set);
-}
-
-local_inline uint8_t dict_mm_extract(const mask_t mask)
-{
-    return mm_scan(mask);
-}
+    const size_t  g   = dict_capacity(dict) - 1;
+    const mm_t    txn = dup_tag(get_tag(h));
     
-local ssize_t
-dict_insert(Dict *dict, Type key, Type value, const hash_t hash)
-{
-    assert(NULL != dict);
-    assert(NULL != key);
 
-    const  uint8_t tag = dict_slot_tag(hash);
-    const  mm_t    dup = dict_mm_dup(tag);
-    struct visit_t v;
-
-    vset_struct(&v, dict, 0);
-
-    dict_for_each_p(v, hash)
+    for (size_t p=0, n=0, i=(h & g); true; i=(h + p & g))
     {
-        dict_for_each_mask_p(v, dup)
+        const mm_t  v = load_group(grp + i); 
+        for (mask_t m = cmp_group(v, txn); m; m &= m - 1)
         {
-            khpair_t kh = vget_keyhash(v);
-            int cmp = dict_keycmp(dict, kh, key, hash);
-            if (cmp) {
-                if (cmp < 0) return -1;
-                return dict_swapval(dict, key, value, vget_idx(v));
-            }
-        }
-
-        mask_t m = dict_mm_null_slot(vget_group(v));
-        if (m) return dict_add_entry(dict, key, value, hash, tag, vget_grpidx(v)+dict_mm_extract(m));
-    }
-    UNREACHABLE();
-}
-
-local_inline ssize_t
-dict_insert_deleted(Dict *dict, Type key, Type value, const hash_t hash)
-{
-    assert(NULL != dict);
-    assert(NULL != key);
-
-    bool    t = true; // true if k is unset
-    size_t  k = 0;
-    const  uint8_t tag = dict_slot_tag(hash);
-    const  mm_t    dup = dict_mm_dup(tag);
-    struct visit_t v;
-
-    vset_struct(&v, dict, 0);
-
-    dict_for_each_p(v, hash)
-    {
-        dict_for_each_mask_p(v, dup)
-        {
-            khpair_t kh = vget_keyhash(v);
-            int cmp = dict_keycmp(dict, kh, key, hash);
-            if (cmp) {
-                if (cmp < 0) return -1;
-                return dict_swapval(dict, key, value, vget_idx(v));
-            }
-        }
-
-        mask_t m = 0;
-        if ((t) AND (m=dict_mm_del_slot(vget_group(v))))
-            k=vget_grpidx(v)+dict_mm_extract(m), t=false;
-
-        if (dict_mm_has_null_slot(vget_group(v)))
-        {
-            if (NOT (t))
-                return dict_add_entry(dict, key, value, hash, tag, k);
-            return -1;
-        }
-    }
-    UNREACHABLE();
-}
-
-local_inline ssize_t
-dict_lookup(Dict *dict, Type key, hash_t hash)
-{
-    assert(NULL != dict);
-    assert(NULL != key);
-
-    const mm_t dup   = dict_mm_dup(dict_slot_tag(hash));
-    struct visit_t v;
-
-    vset_struct(&v, dict, 0);
-
-    dict_for_each_p(v, hash)
-    {
-        dict_for_each_mask_p(v, dup)
-        {
-            khpair_t kh = vget_keyhash(v);
-            int cmp = dict_keycmp(dict, kh, key, hash);
+            khpair_t kh = khp[i + bsr(m)];
+            int cmp = dict_keycmp(dict, kh, key, h);
             if (cmp) return cmp;
         }
-        if (dict_mm_has_null_slot(vget_group(v)))
+        if (has_null(v))
             return -1;
+        p += n; // probe next slot
+        n += DICT_N_GROUP;
     }
     UNREACHABLE();
 }
@@ -973,7 +1019,7 @@ dict_lookup(Dict *dict, Type key, hash_t hash)
 #undef PLUSNGROUP
 #undef LASTGRP
 #undef NEXT_GROUP
-#undef DICT_ENT
+#undef DICT_ENTRY
 
 #undef dict_
 #undef Dict
