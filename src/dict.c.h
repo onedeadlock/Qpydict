@@ -5,12 +5,10 @@
 #include <string.h>
 #include <assert.h>
 #include "include/types.h"
-#include "include/visit.h"
-#include "include/defs.h"
-#include "include/arch/mm.h"
+#include "include/def.h"
+#include "include/arch/simd.h"
 
 #if defined(MM_SUPPORT) AND (MM_SUPPORT != 0)
-#define dict_ qpydict_
 #define Dict  QPyDictObject
 
 /**                     DICT IMPLEMENTATION
@@ -35,15 +33,11 @@
 #define SHPTR(ptr) (uint16_t *)PTR(ptr)
 #define LONG(x)    (long)(x)
 
+#define _N_GROUP NGROUP
 #define DCR(x) --(x)
 #define ICR(x) ++(x)
 
-#define PLUSNGROUP(x) ((x)   + NGROUP)
-#define LASTGRP(x)    (ALIGNU(x/NGROUP, NGROUP) - NGROUP)
-#define NEXT_GROUP(x) ((x) += NGROUP)
-
-#define out_of_range_lf(lf) ((lf) < .3 OR(lf) > 1.)
-#define inc_entry_size(d)   ++((d)->used_size)
+#define PLUSNGROUP(x) ((x) + NGROUP)
 
 #if defined(SIZE_MAX) AND (SIZE_MAX > 0xffffffffU)
 #   define SBIT 64
@@ -84,10 +78,19 @@ local_inline size_t pure__ ppot(size_t x)
 }
 #undef SBIT
 
+local_inline size_t pure__ bsr(const size_t x)
+{
+#if defined(BSR)
+    return  BSR(x);
+#else
+    // TODO
+#endif
+}
+
 local_inline size_t pure__ popcnt(const size_t x)
 {
 #if defined(POPCNT)
-    return POPCNT(x);
+    return  POPCNT(x);
 #else
     // TODO
 #endif
@@ -123,12 +126,14 @@ advice_size(const size_t n, const float f)
 }
 
 local cache_t const dict_Local_null_group[NGROUP_MAX] = {
-#   define k DICT_EMPTY
-    1, k, k, k, k, k, k, k, k,
+#   define k DICT_NULL
+#   define s DICT_SENT
+    s, k, k, k, k, k, k, k, k,
     k, k, k, k, k, k, k, k, k,
     k, k, k, k, k, k, k, k, k,
     k, k, k, k, k, k, k, k, k
 #   undef k
+#   undef s
 };
 
 local khpair_t const dict_Local_null_key[2] = {0};
@@ -136,7 +141,7 @@ local Type     const dict_Local_null_val[2] = {0};
 
 static Dict const dict_Local_null_Dict = {
     .entries.cache   = &dict_Local_null_group,
-    .entries.key     = dict_Local_null_key + 1, 
+    .entries.key     = dict_Local_null_key + 1,
     .entries.values  = dict_Local_null_val + 1
 };
 
@@ -184,7 +189,7 @@ const local_inline mm_t dup_tag(const uint8_t tag)
 
 local_inline mask_t load_group(const void *v)
 {
-    return mm_mask_null(v, dict_Local_null_set);
+    return mm_load(v);
 }
 
 local_inline mask_t
@@ -208,9 +213,9 @@ local_inline mask_t cmp_full(const mm_t group)
     return mm_mask_full(group, dict_Local_del_set, dict_Local_null_set);
 }
 
-const local_inline uint8_t bsr(const mask_t mask)
+local_inline const uint8_t mbsr(const mask_t mask)
 {
-    return mm_scan(mask);
+    return MM_IDX(bsr(mask));
 }
 
 local_inline const size_t dict_size(const Dict *dict)
@@ -237,13 +242,13 @@ local_inline const void * dict_cache(const Dict *dict)
     return dict->entries.cache;
 }
 
-local_inline int dict_isempty(const Dict *dict)
+local_inline const int dict_isempty(const Dict *dict)
 {
     assert(NULL != dict);
     return dict->used_size == 0;
 }
 
-local_inline int dict_isunused(const Dict *dict)
+local_inline const int dict_isunused(const Dict *dict)
 {
     assert(NULL != dict);
     return dict->capacity == 0;
@@ -280,15 +285,16 @@ dict_set_size(Dict *dict, const size_t n)
     dict->used_size = n | 0;
 }
 
-#define _Dict_Keys(d)   (true, (d)->entries.kh)
-#define _Dict_Values(d) (true, (d)->entries.values)
+#define _Dict_keys(d)   (true, (d)->entries.kh)
+#define _Dict_cache(d)  (true, (d)->entries.cache)
+#define _Dict_values(d) ((d)->entries.values)
 
-local_inline void _Dict_fl_set_alloc(Dict *dict)
+local_inline void _Dict_Fl_set_alloc(Dict *dict)
 {
     dict->flags |= 0x80;
 }
 
-local_inline bool _Dict_fl_have_alloc(const Dict *dict)
+local_inline bool _Dict_Fl_have_alloc(const Dict *dict)
 {
     return dict->flags & 0x80;
 }
@@ -358,7 +364,7 @@ dict_aligned_malloc(void *dp,
                     const size_t n, // size
                     const short  k) // align size
 {
-    assert(0 == (k & (k - 1))); // must be a power of two 
+    assert(0 == (k & (k - 1))); // must be a power of two
 
     void *ptr = NULL;
     short mx  = (k - 1) + sizeof mx; // max offset size
@@ -443,7 +449,7 @@ dict_malloc_self_(void *UNUSED(type), size_t UNUSED(n))
 #  endif
 
     if (NULL != self)
-        _Dict_set_have_alloc(self);
+        _Dict_Fl_set_alloc(self);
 
     return self;
 }
@@ -455,7 +461,7 @@ local_inline void *dict_free_self_(void *dp)
 
     Dict *self = *(Dict **)dp;
 
-    if (NULL == self OR NOT _Dict_fl_have_alloc(self))
+    if (NULL == self OR NOT _Dict_Fl_have_alloc(self))
         return NULL;
 
 #  ifndef NO_PyAPI
@@ -493,7 +499,7 @@ local_inline int dict_malloc_ckhv(cache_t  **c,
 
     // alloc value array
     if (NOT dict_malloc(*v, n * sizeof(Type ))
-        OR // alloc key-hash pairs 
+        OR // alloc key-hash pairs
         NOT dict_malloc(kh, n * sizeof(khpair_t)))
         return dict_cfree(c), dict_free(v), -1; // failed
 
@@ -505,12 +511,12 @@ local_inline int dict_malloc_ckhv(cache_t  **c,
     return 0;
 }
 
-#define DICT_ENTRYRY(d) (&((d)->entries))
+#define DICT_ENTRY(d) (&((d)->entries))
 
 local_inline void dict_free_ckhv_in_entry(Dict *dict)
 {
     assert(NULL != dict);
-    if (_Dict_fl_not_malloc(dict))
+    if (_Dict_Fl_have_alloc(dict))
         return;
     entry_t *e = DICT_ENTR(dict);
 
@@ -520,7 +526,7 @@ local_inline void dict_free_ckhv_in_entry(Dict *dict)
 local_inline int dict_unset(Dict **dict)
 {
     assert(NULL != dict);
-    *dict = &dict_Local_null_struct;
+    *dict = &dict_Local_null_Dict;
     return 0;
 }
 
@@ -532,7 +538,7 @@ dict_set(Dict **dict, size_t n, float f)
     entry_t *e = DICT_ENTRY(*dict);
     void   *kh = &(e->kh), *v = &(e->values), *c = &(e->cache);
 
-    if (_Dict_fl_not_malloc(*dict) OR BAD_LOADFACT(lf))
+    if (NOT _Dict_Fl_have_alloc(*dict) OR BAD_LOADFACT(f))
         return -1;
     if (0 == n) return dict_unset(dict);
     n = basic_size(n, sizeof(khpair_t), f);
@@ -542,7 +548,7 @@ dict_set(Dict **dict, size_t n, float f)
     if (NOT dict_malloc_ckhv(c, v, kh, n))
         return -1;
 
-    dict_setcap(*dict, n, 0, lf);
+    dict_setcap(*dict, n, 0, f);
     return 0;
 }
 
@@ -555,16 +561,16 @@ dict_map(Dict *dict,
 {
     assert(NULL != dict);
 
-    const Type    khp = _Dict_Keys(dict);
+    const Type    khp = _Dict_keys(dict);
     const Type    vp  = _Dict_values(dict);
-    const cache_t grp = dict_cache(dict);
-    
+    const cache_t grp = _Dict_cache(dict);
+
     const size_t n = dict_capacity(dict);
 
-    for (size_t j, i=0; i < n; i+=DICT_N_GROUP)
+    for (size_t j, i=0; i < n; i+=_N_GROUP)
         for (mask_t m = cmp_full(load_group(grp + i)); m; m &= m - 1)
         {
-            j = i + bsr(m);
+            j = i + mbsr(m);
             if (do_fn(khp[j].key, vp[j], arg))
                 return -1;
         }
@@ -578,11 +584,11 @@ dict_count_used(Dict *dict, size_t n)
     if (0 == n)
         return dict_size(dict);
 
-    const cache_t grp = dict_cache(dict);
+    const cache_t grp = _Dict_cache(dict);
 
     size_t k = 0, j = n; // TODO: align (n)
 
-    for (size_t i=0; i < j; i+=DICT_N_GROUP)
+    for (size_t i=0; i < j; i+=_N_GROUP)
     {
         mask_t m  = cmp_full(load_group(grp + i));
         if (m) k += popcnt(m); // TODO
@@ -616,15 +622,15 @@ dict_new(void **type, ssize_t n, float lf)
 #ifndef NO_PyAPI
 local_inline void dict_Py_release_kv_ref(Dict *dict)
 {
-    const cache_t grp = dict_cache(dict);
+    const cache_t grp = _Dict_cache(dict);
     const size_t  n   = dict_capacity(dict);
-    
-    for (size_t j, i=0; i < n; i+=DICT_N_GROUP)
+
+    for (size_t j, i=0; i < n; i+=_N_GROUP)
         for (mask_t m = cmp_full(load_group(grp + i)); m; m &= m - 1)
         {
-            j = i + bsr(m);
-            const khpair_t k  = _Dict_Keys(dict)[j].key;
-            const Type     v  = _Dict_Values(dict)[j];
+            j = i + mbsr(m);
+            const khpair_t k  = _Dict_keys(dict)[j].key;
+            const Type     v  = _Dict_values(dict)[j];
 
             Py_DECREF(k);
             Py_DECREF(v);
@@ -644,7 +650,7 @@ local void *dict_remove(Dict **dict)
     assert(NULL != dict);
 
     Dict *d = *dict;
-    if (NULL == d OR _Dict_Fl_Not_malloc(d))
+    if (NULL == d OR NOT _Dict_Fl_have_alloc(d))
         return NULL;
 
 # ifdef NO_PyAPI
@@ -662,19 +668,19 @@ dict_copy_insert_n_(Dict * restrict dest,
                     const Dict * restrict src,
                     const size_t n)
 {
-    const cache_t grp = dict_cache(dict);
+    const cache_t grp = _Dict_cache(dict);
 
-    for (size_t j, k=n, i=0; i < n; i+=DICT_N_GROUP) // TODO: align(n)
-        for (mask_t m = mask_t m = cmp_full(load_group(grp + i)); m; m &= m - 1)
+    for (size_t j, k=n, i=0; i < n; i+=_N_GROUP) // TODO: align(n)
+        for (mask_t m = cmp_full(load_group(grp + i)); m; m &= m - 1)
         {
-            j = i + bsr(m);
-            const khpair_t kh = _Dict_Keys(dict)[j];
-            const Type     v  = _Dict_Values(dict)[j];
+            j = i + mbsr(m);
+            const khpair_t kh = _Dict_keys(dict)[j];
+            const Type     v  = _Dict_values(dict)[j];
 
             if (dict_insert(dest, kh.key, v, kh.hash))
                 return NULL;
             if (NOT --k)
-                goto ret; 
+                goto ret;
         }
  ret:
     return dict_set_size(dest, n - k), dest;
@@ -684,15 +690,15 @@ local_inline void *
 dict_copy_insert_all_(Dict * restrict dest,
                       const Dict * restrict src)
 {
-    const cache_t grp = dict_cache(dict);
+    const cache_t grp = _Dict_cache(dict);
     const size_t  n   = dict_capacity(dict);
 
-    for (size_t j, k=n, i=0; i < n; i+=DICT_N_GROUP) // TODO: align(n)
-        for (mask_t m = mask_t m = cmp_full(load_group(grp + i)); m; m &= m - 1)
+    for (size_t j, k=n, i=0; i < n; i+=_N_GROUP) // TODO: align(n)
+        for (mask_t m = cmp_full(load_group(grp + i)); m; m &= m - 1)
         {
-            j = i + bsr(m);
-            const khpair_t kh = _Dict_Keys(dict)[j];
-            const Type     v  = _Dict_Values(dict)[j];
+            j = i + mbsr(m);
+            const khpair_t kh = _Dict_keys(dict)[j];
+            const Type     v  = _Dict_values(dict)[j];
 
             if (dict_insert(dest, kh.key, v, kh.hash))
                 return NULL;
@@ -709,8 +715,8 @@ dict_copy(Dict * restrict dest,
     assert(NULL != src);
 
     if (dict_isempty(src))
-        return &dict_Local_null_struct;
-    
+        return &dict_Local_null_Dict;
+
     if (true == k AND NOT(d=dict_new(dest, n, dict_load_fact(src))))
         return d;
 
@@ -731,7 +737,7 @@ dict_ncopy(Dict * restrict dest,
     assert(NULL != src AND 0 != n);
 
     if (dict_isempty(src))
-        return &dict_Local_null_struct;
+        return &dict_Local_null_Dict;
 
     if (true == k AND NOT(d=dict_new(dest, n, dict_load_fact(src))))
         return d;
@@ -747,7 +753,7 @@ local void *dict_clone(Dict *dict)
     assert(NULL != dict);
 
     if (dict_isempty(dict))
-        return &dict_Local_null_struct;
+        return &dict_Local_null_Dict;
     // TODO
     return NULL;
 }
@@ -816,7 +822,7 @@ dict_update(Dict *d1,
     return dict_merge_(d1, d2, true);
 }
 
-#define DICT_VCOPY(d, n, b) (n < dict_size(d) ? dict_ncopy(b, d, n) : dict_copy(b, d)) 
+#define DICT_VCOPY(d, n, b) (n < dict_size(d) ? dict_ncopy(b, d, n) : dict_copy(b, d))
 
 local_inline int
 dict_rehash(Dict **dict, size_t n)
@@ -826,7 +832,7 @@ dict_rehash(Dict **dict, size_t n)
     if (0 == n) // a size of zero is the same as remove
         return dict_remove(dict);
 
-    Dict *d = DICT_VCOPY(*dict, n, NULL); 
+    Dict *d = DICT_VCOPY(*dict, n, NULL);
     if (NULL == d)
         return -1;
 
@@ -853,9 +859,9 @@ dict_resize(Dict *dict, size_t n)
 local_inline int
 dict_swapval(Dict *dict, const Type key, Type value, size_t j)
 {
-    Type tmp = _Dict_Values(dict)[j];
+    Type tmp = _Dict_values(dict)[j];
 
-    _Dict_Values(dict)[j] = value;
+    _Dict_values(dict)[j] = value;
 
 #   ifndef NO_PyAPI
     Py_XDECREF(tmp);
@@ -922,8 +928,8 @@ dict_insert(Dict *dict, Type key, Type val, hash_t h)
     assert(NULL != dict);
     assert(NULL != key);
 
-    const Type    khp = _Dict_Keys(dict); // key array
-    const cache_t grp = dict_cache(dict); // cache array
+    const Type    khp = _Dict_keys(dict); // key array
+    const cache_t grp = _Dict_cache(dict); // cache array
 
     const size_t  g   = dict_capacity(dict) - 1;
     const uint8_t t   = get_tag(h); // tag
@@ -935,7 +941,7 @@ dict_insert(Dict *dict, Type key, Type val, hash_t h)
         auto  mask_t m = cmp_group(v, txn); // matched tags
         for (int j; (m); m &= m - 1)
         {
-            j = i + bsr(m);
+            j = i + mbsr(m);
             khpair_t kh = khp[j];
             int cmp = dict_keycmp(dict, kh, key, h);
             if (cmp)
@@ -946,9 +952,9 @@ dict_insert(Dict *dict, Type key, Type val, hash_t h)
             }
             m = cmp_null(v);
             if (m)
-                return dict_add(dict, key, val, h, t, i + bsr(m));
+                return dict_add(dict, key, val, h, t, i + mbsr(m));
             p += n; // probe next slot
-            n += DICT_N_GROUP;
+            n += _N_GROUP;
         }
     UNREACHABLE();
 }
@@ -962,8 +968,8 @@ dict_insert_deleted(Dict *dict, Type key, Type val, hash_t h)
     bool    f = true; // true if k is unset
     size_t  k = 0; // cache empty or deleted slot index
 
-    const Type    khp = _Dict_Keys(dict);
-    const cache_t grp = dict_cache(dict);
+    const Type    khp = _Dict_keys(dict);
+    const cache_t grp = _Dict_cache(dict);
 
     const size_t  g   = dict_capacity(dict) - 1;
     const uint8_t t   = get_tag(h);
@@ -975,7 +981,7 @@ dict_insert_deleted(Dict *dict, Type key, Type val, hash_t h)
         auto  mask_t m = cmp_group(v, txn);
         for (int j; (m); m &= m - 1)
         {
-            j = i + bsr(m);
+            j = i + mbsr(m);
             khpair_t kh = khp[j];
             int cmp = dict_keycmp(dict, kh, key, h);
             if (cmp)
@@ -985,7 +991,7 @@ dict_insert_deleted(Dict *dict, Type key, Type val, hash_t h)
                 return dict_swapval(dict, key, val, j);
             }
             if (true == f AND (m=cmp_deleted(v)))
-                k = i + bsr(m); f=false;
+                k = i + mbsr(m); f=false;
             if (has_null(v))
             {
                 if (false == f)
@@ -993,7 +999,7 @@ dict_insert_deleted(Dict *dict, Type key, Type val, hash_t h)
                 return -1;
             }
             p += n;
-            n += DICT_N_GROUP;
+            n += _N_GROUP;
         }
     UNREACHABLE();
 }
@@ -1004,26 +1010,26 @@ dict_lookup(Dict *dict, Type key, hash_t h)
     assert(NULL != dict);
     assert(NULL != key);
 
-    const Type    khp = dict_khpairs(dict);
-    const cache_t grp = dict_cache(dict);
+    const Type    khp = _Dict_keys(dict);
+    const cache_t grp = _Dict_cache(dict);
 
     const size_t  g   = dict_capacity(dict) - 1;
     const mm_t    txn = dup_tag(get_tag(h));
-    
+
 
     for (size_t p=0, n=0, i=(h & g); true; i=(h + p & g))
     {
-        const mm_t  v = load_group(grp + i); 
+        const mm_t  v = load_group(grp + i);
         for (mask_t m = cmp_group(v, txn); m; m &= m - 1)
         {
-            khpair_t kh = khp[i + bsr(m)];
+            khpair_t kh = khp[i + mbsr(m)];
             int cmp = dict_keycmp(dict, kh, key, h);
             if (cmp) return cmp;
         }
         if (has_null(v))
             return -1;
         p += n; // probe next slot
-        n += DICT_N_GROUP;
+        n += _N_GROUP;
     }
     UNREACHABLE();
 }
