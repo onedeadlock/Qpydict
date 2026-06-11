@@ -45,66 +45,90 @@
 #define out_of_range_lf(lf) ((lf) < .3 OR(lf) > 1.)
 #define inc_entry_size(d)   ++((d)->used_size)
 
-local_inline size_t next_power_of_two(size_t n)
-{
-    assert(n != 0);
-
-    return (
-#if (SIZE_MAX > 0xffffffffU)
-            1ULL << (64 - BSF(n))
+#if defined(SIZE_MAX) AND (SIZE_MAX > 0xffffffffU)
+#   define SBIT 64
 #else
-            1U << (32 - BSF(n))
+#   define SBIT 32
 #endif
-           );
+
+local_inline size_t pure__ npot(const size_t x)
+{
+    // next power of two
+    assert(x != 0); // x must not be zero
+#if defined(BSF)
+    return 1ULL << (SBIT - BSF(x));
+#else
+    x -= 1;
+    x |= x >> 1;
+    x |= x >> 2;
+    x |= x >> 4;
+    x |= x >> 8;
+    x |= x >> 16;
+
+#   if 64 == SBIT
+    x |= x >> 32;
+#   endif
+    return x + 1;
+#endif
 }
 
-local_inline size_t prev_power_of_two(size_t n)
+local_inline size_t pure__ ppot(size_t x)
 {
-    assert(n != 0);
-
-    return (
-#if (SIZE_MAX > 0xffffffffU)
-            1ULL << (63 - BSF(n))
+    // previous power of two
+    assert(x != 0); // x must not be zero
+#if defined(BSF)
+    return 1ULL << ((SBIT - 1) - BSF(x));
 #else
-            1U << (31 - BSF(n))
+    // TODO
 #endif
-           );
+}
+#undef SBIT
+
+local_inline size_t pure__ popcnt(const size_t x)
+{
+#if defined(POPCNT)
+    return POPCNT(x);
+#else
+    // TODO
+#endif
 }
 
-local_inline   const size_t
-size_no_resize(const size_t size,
-               const float  lf)
+local_inline const size_t
+max_size(const size_t n, const float f)
 {
-    return next_power_of_two(size / lf);
+    assert(.0 != f);
+    // maximum size that will not trigger rehash
+    return npot(n / f);
 }
 
 local_inline size_t
-try_size_requirement(const size_t size,
-                     const size_t max_object_size,
-                     const float  lf)
+basic_size(const size_t n,   // size
+           const size_t max, // max object size
+           const float  f)   // load fsctor
 {
-    assert(size != 0);
+    if (0 == n) return n;
 
-    size_t mx = size_no_resize(size, lf);
+    const size_t mx = max_size(n, f);
 
-    if (check_if_safe_mul(mx, max_object_size, (size_t)0))
-        return mx;
-    return 0;
-}
-
-local_inline size_t
-advice_size_requirement(const size_t size, const float lf)
-{
-    if (0 == size)
+    assert_unsafe_mul(mx, max, mx)
         return 0;
-    return size_no_resize(size, lf);
+
+    return mx;
+}
+
+local_inline size_t
+advice_size(const size_t n, const float f)
+{
+    return max_size(n, f);
 }
 
 local cache_t const dict_Local_null_group[NGROUP_MAX] = {
-#   define y8(y) y, y, y, y, y, y, y, y
-    y8(DICT_EMPTY), y8(DICT_EMPTY),
-    y8(DICT_EMPTY), y8(DICT_EMPTY)
-#   undef y8
+#   define k DICT_EMPTY
+    1, k, k, k, k, k, k, k, k,
+    k, k, k, k, k, k, k, k, k,
+    k, k, k, k, k, k, k, k, k,
+    k, k, k, k, k, k, k, k, k
+#   undef k
 };
 
 local khpair_t const dict_Local_null_key[2] = {0};
@@ -207,22 +231,10 @@ local_inline const size_t dict_capacity(const Dict *dict)
     return dict->capacity;
 }
 
-local_inline const void * dict_khpairs(const Dict *dict)
-{
-    assert(NULL != dict);
-    return dict->entries.kh;
-}
-
 local_inline const void * dict_cache(const Dict *dict)
 {
     assert(NULL != dict);
     return dict->entries.cache;
-}
-
-local_inline const void * dict_values(const Dict *dict)
-{
-    assert(NULL != dict);
-    return dict->entries.values;
 }
 
 local_inline int dict_isempty(const Dict *dict)
@@ -241,15 +253,18 @@ local_inline const float
 dict_load_fact(const Dict *dict)
 {
     assert(NULL != dict);
-    return (1. * dict->max_size) / dict->capacity + 5e-4; // TODO: double overflow
+    // TODO
+    LOG("%s", "dict_load_fact: implement me!");
+    return 0.875;
 }
 
+#define BAD_LOADFACT(f) ((f) < .25 OR (f) > 1.)
 local_inline int
-dict_set_load_fact(Dict *dict, const float lf)
+dict_set_load_fact(Dict *dict, const float f)
 {
     assert(NULL != dict);
 
-    if (out_of_range_lf(lf))
+    if (BAD_LOADFACT(f))
         return -1;
 
     dict->max_size = dict->capacity * lf;
@@ -265,27 +280,26 @@ dict_set_size(Dict *dict, const size_t n)
     dict->used_size = n | 0;
 }
 
-local_inline void dict_set_owned_memory(Dict *dict)
-{
-    assert(NULL != dict);
+#define _Dict_Keys(d)   (true, (d)->entries.kh)
+#define _Dict_Values(d) (true, (d)->entries.values)
 
+local_inline void _Dict_fl_set_alloc(Dict *dict)
+{
     dict->flags |= 0x80;
 }
 
+local_inline bool _Dict_fl_have_alloc(const Dict *dict)
+{
+    return dict->flags & 0x80;
+}
+
 local_inline void
-dict_setcap(Dict *dict, size_t cap, size_t size, float lf)
+dict_setcap(Dict *dict, size_t cap, size_t n, float f)
 {
     dict->capacity       = cap;
     dict->group_capacity = ALIGN(cap / NGROUP, NGROUP);
-    dict->max_size       = lf * cap;
-    dict->used_size      = size;
-}
-
-local_inline const int dict_owned_memory(const Dict *dict)
-{
-    assert(NULL != dict);
-
-    return dict->flags & 0x80;
+    dict->max_size       = f * cap;
+    dict->used_size      = n;
 }
 
 #define DKTO_PTR(p, d) (((p) AND (d) AND (DPTR(d)=(p))), (p))
@@ -349,7 +363,7 @@ dict_aligned_malloc(void *dp,
     void *ptr = NULL;
     short mx  = (k - 1) + sizeof mx; // max offset size
 
-    if (check_if_size_add_overflow(n, mx))
+    assert_unsafe_add(n, mx, n)
         return NULL;
     if (NOT dict_malloc(&ptr, n + mx))
         return ptr;
@@ -386,8 +400,8 @@ dict_aligned_calloc(const size_t n,
 
 warn_unused local_inline void *
 dict_memset_alloc(const size_t n,
-                  const short  k,
-                  const int    c)
+                  const short  k, // alignment
+                  const int    c) // memset char
 {
     void *ptr = dict_aligned_malloc(NULL, n, k);
 
@@ -402,10 +416,10 @@ dict_cmalloc(void *dp, const size_t n)
 {
     assert(0 != n);
 
-    if (check_if_size_add_overflow(n, NGROUP))
+    assert_unsafe_add(n, NGROUP, n)
         return NULL;
 
-    void *ptr = dict_aligned_mset(n+NGROUP, NGROUP, DICT_EMPTY);
+    void *ptr = dict_memset_alloc(n+NGROUP, NGROUP, DICT_EMPTY);
 
     return DKTO_PTR(ptr, dp);
 }
@@ -422,13 +436,15 @@ dict_malloc_self_(void *UNUSED(type), size_t UNUSED(n))
 
 #  ifndef NO_PyAPI
     assert(NULL != type);
+
     self = (Dict *)(Py_TYPE(type)->tp_alloc(type, 0));
 #  else
     self = dict_malloc(NULL, sizeof(Dict));
 #  endif
 
     if (NULL != self)
-        dict_set_owned_memory(self);
+        _Dict_set_have_alloc(self);
+
     return self;
 }
 
@@ -436,14 +452,18 @@ local_inline void *dict_free_self_(void *dp)
 {
     if (NULL == dp)
         return dp;
+
     Dict *self = *(Dict **)dp;
-    if (NULL == self OR NOT dict_owned_memory(self))
+
+    if (NULL == self OR NOT _Dict_fl_have_alloc(self))
         return NULL;
 
 #  ifndef NO_PyAPI
     PyTypeObject *tp = Py_TYPE(tp);
+
     if (tp->tp_flags & Py_TPFLAGS_HAVE_GC)
         PyObject_GC_UnTrack(tp);
+
     tp->tp_free(self);
 #  else
     dict_free(self);
@@ -467,18 +487,18 @@ local_inline int dict_malloc_ckhv(cache_t  **c,
                                   khpair_t **kh,
                                   size_t     n)
 {
+    // alloc cache
     if (NOT dict_cmalloc(c, n))
         return -1;
-    if (NOT dict_malloc(*v, n * sizeof(Type )) OR
+
+    // alloc value array
+    if (NOT dict_malloc(*v, n * sizeof(Type ))
+        OR // alloc key-hash pairs 
         NOT dict_malloc(kh, n * sizeof(khpair_t)))
-    {
-        dict_cfree(c), dict_free(v), dict_free(kh);
-        return -1;
-    }
-    // store dummy key and value before entries so that (key|value)[-1] returns it (in the case of error) 
-    **v  = dict_Local_null_val; // TODO
+        return dict_cfree(c), dict_free(v), -1; // failed
+
+    **v  = dict_Local_null_val;
     **kh = dict_Local_null_key;
-    // move ahead of dummy key and value
     *v  += 1;
     *kh += 1;
 
@@ -490,9 +510,9 @@ local_inline int dict_malloc_ckhv(cache_t  **c,
 local_inline void dict_free_ckhv_in_entry(Dict *dict)
 {
     assert(NULL != dict);
-    if (0 != dict_owned_memory(dict))
+    if (_Dict_fl_not_malloc(dict))
         return;
-    entry_t *e = DICT_ENTRYRY(dict);
+    entry_t *e = DICT_ENTR(dict);
 
     return dict_free_ckhv(e->cache, e->values, e->kh);
 }
@@ -500,33 +520,29 @@ local_inline void dict_free_ckhv_in_entry(Dict *dict)
 local_inline int dict_unset(Dict **dict)
 {
     assert(NULL != dict);
-    *dict = (Dict *)dict_struct_empty();
+    *dict = &dict_Local_null_struct;
     return 0;
 }
 
 local int
-dict_set(Dict **dict,
-                size_t n,
-                float  lf)
+dict_set(Dict **dict, size_t n, float f)
 {
     assert(NULL != dict AND NULL != *dict);
-    assert(0 != dict_owned_memory(*dict));
 
-    entry_t *e = DICT_ENTRYRY(*dict);
+    entry_t *e = DICT_ENTRY(*dict);
     void   *kh = &(e->kh), *v = &(e->values), *c = &(e->cache);
 
-    if (out_of_range_lf(lf))
+    if (_Dict_fl_not_malloc(*dict) OR BAD_LOADFACT(lf))
         return -1;
+    if (0 == n) return dict_unset(dict);
+    n = basic_size(n, sizeof(khpair_t), f);
     if (0 == n)
-        return dict_unset(dict);
+        return -1;
 
-    n = try_size_requirement(n, sizeof(khpair_t), lf);
-    if (0 == n)
-        return -1;
     if (NOT dict_malloc_ckhv(c, v, kh, n))
         return -1;
-    dict_setcap(*dict, n, 0, lf);
 
+    dict_setcap(*dict, n, 0, lf);
     return 0;
 }
 
@@ -539,14 +555,14 @@ dict_map(Dict *dict,
 {
     assert(NULL != dict);
 
-    const Type    khp = dict_khpairs(dict);
-    const Type    vp  = dict_values(dict);
+    const Type    khp = _Dict_Keys(dict);
+    const Type    vp  = _Dict_values(dict);
     const cache_t grp = dict_cache(dict);
     
     const size_t n = dict_capacity(dict);
 
     for (size_t j, i=0; i < n; i+=DICT_N_GROUP)
-        for (mask_t m = mask_t m = cmp_full(load_group(grp + i)); m; m &= m - 1)
+        for (mask_t m = cmp_full(load_group(grp + i)); m; m &= m - 1)
         {
             j = i + bsr(m);
             if (do_fn(khp[j].key, vp[j], arg))
@@ -561,6 +577,8 @@ dict_count_used(Dict *dict, size_t n)
     assert(n > dict_capacity(dict));
     if (0 == n)
         return dict_size(dict);
+
+    const cache_t grp = dict_cache(dict);
 
     size_t k = 0, j = n; // TODO: align (n)
 
@@ -588,35 +606,46 @@ dict_new(void **type, ssize_t n, float lf)
     dict = dict_malloc_self_(type, 0);
     if (NULL == dict)
          return dict;
+
     if (dict_set(&dict, n, lf) != 0)
         return dict_free_self_(dict);
+
     return dict;
 }
 
-
+#ifndef NO_PyAPI
 local_inline void dict_Py_release_kv_ref(Dict *dict)
 {
     const cache_t grp = dict_cache(dict);
     const size_t  n   = dict_capacity(dict);
     
     for (size_t j, i=0; i < n; i+=DICT_N_GROUP)
-        for (mask_t m = mask_t m = cmp_full(load_group(grp + i)); m; m &= m - 1)
+        for (mask_t m = cmp_full(load_group(grp + i)); m; m &= m - 1)
         {
             j = i + bsr(m);
-            khpair_t k = DICT_ENTRYRY(dict)->kh[j].key;
-            Type     v = DICT_ENTRYRY(dict)->values[j];;
+            const khpair_t k  = _Dict_Keys(dict)[j].key;
+            const Type     v  = _Dict_Values(dict)[j];
 
             Py_DECREF(k);
             Py_DECREF(v);
         }
 }
+#endif
+
+local_inline void _dict_remove(Dict **dict)
+{
+    dict_free_ckhv_in_entry(dict);
+    dict_free_self_(dict);
+    dict_unset(dict);
+}
 
 local void *dict_remove(Dict **dict)
 {
-    assert(NULL != dict && NULL != *dict);
-    assert(0 != dict_owned_memory(*dict));
+    assert(NULL != dict);
 
     Dict *d = *dict;
+    if (NULL == d OR _Dict_Fl_Not_malloc(d))
+        return NULL;
 
 # ifdef NO_PyAPI
     if (NULL != d->clear)
@@ -624,12 +653,8 @@ local void *dict_remove(Dict **dict)
 # else
     dict_Py_release_kv_ref(dict);
 # endif
-    dict_free_ckhv_in_entry(d);
-    dict_free_self_(d);
-    dict_unset(dict);
-
+    _dict_remove(d);
     return NULL;
-#   define dict_remove(d) dict_remove(&d)
 }
 
 local_inline void *
@@ -637,16 +662,14 @@ dict_copy_insert_n_(Dict * restrict dest,
                     const Dict * restrict src,
                     const size_t n)
 {
-    const Type    khp = dict_khpairs(dict);
-    const Type    vp  = dict_values(dict);
     const cache_t grp = dict_cache(dict);
 
     for (size_t j, k=n, i=0; i < n; i+=DICT_N_GROUP) // TODO: align(n)
         for (mask_t m = mask_t m = cmp_full(load_group(grp + i)); m; m &= m - 1)
         {
             j = i + bsr(m);
-            khpair_t kh = khp[j];
-            Type     v  = vp[j];
+            const khpair_t kh = _Dict_Keys(dict)[j];
+            const Type     v  = _Dict_Values(dict)[j];
 
             if (dict_insert(dest, kh.key, v, kh.hash))
                 return NULL;
@@ -661,40 +684,39 @@ local_inline void *
 dict_copy_insert_all_(Dict * restrict dest,
                       const Dict * restrict src)
 {
-    const Type    khp = dict_khpairs(dict);
-    const Type    vp  = dict_values(dict);
     const cache_t grp = dict_cache(dict);
+    const size_t  n   = dict_capacity(dict);
 
-    const size_t n = dict_capacity(dict);
     for (size_t j, k=n, i=0; i < n; i+=DICT_N_GROUP) // TODO: align(n)
         for (mask_t m = mask_t m = cmp_full(load_group(grp + i)); m; m &= m - 1)
         {
             j = i + bsr(m);
-            khpair_t kh = khp[j];
-            Type     v  = vp[j];
+            const khpair_t kh = _Dict_Keys(dict)[j];
+            const Type     v  = _Dict_Values(dict)[j];
 
             if (dict_insert(dest, kh.key, v, kh.hash))
                 return NULL;
         }
 }
 
-#define DICT_NEW NULL
-
 warn_unused local_inline void *
 dict_copy(Dict * restrict dest,
           Dict * restrict src)
 {
     Dict *d = dest;
-    bool  k = DICT_NEW == dest;
+    bool  k = NULL == dest;
 
     assert(NULL != src);
 
     if (dict_isempty(src))
-        return dict_empty_struct();
+        return &dict_Local_null_struct;
+    
     if (true == k AND NOT(d=dict_new(dest, n, dict_load_fact(src))))
         return d;
+
     if (NULL == dict_copy_insert_all_(d, src))
         return (true == k AND dict_remove(d)) & 0;
+
     return d;
 }
 
@@ -704,16 +726,19 @@ dict_ncopy(Dict * restrict dest,
            const size_t n)
 {
     Dict *d = dest;
-    bool  k = DICT_NEW == dest;
+    bool  k = NULL == dest;
 
     assert(NULL != src AND 0 != n);
 
     if (dict_isempty(src))
-        return dict_empty_struct();
+        return &dict_Local_null_struct;
+
     if (true == k AND NOT(d=dict_new(dest, n, dict_load_fact(src))))
         return d;
+
     if (NULL == dict_copy_insert_n_(d, src, n))
         return (true == k AND dict_remove(d)) & 0;
+
     return d;
 }
 
@@ -722,7 +747,7 @@ local void *dict_clone(Dict *dict)
     assert(NULL != dict);
 
     if (dict_isempty(dict))
-        return dict_empty_struct();
+        return &dict_Local_null_struct;
     // TODO
     return NULL;
 }
@@ -732,26 +757,28 @@ dict_merge_(Dict *d1,
             Dict *d2,
             bool reuse)
 {
-    Dict *d = NULL;
     bool  e = dict_isempty(d1), e_ = dict_isempty(d2);
 
     if (NOT e AND e_)
-        return dict_copy(DICT_NEW, d1);
+        return dict_copy(NULL, d1);
     if (e AND NOT e_)
-        return dict_copy(DICT_NEW, d2);
+        return dict_copy(NULL, d2);
 
     const size_t n = dict_size(d1), m = dict_size(d2);
+
     // reuse first dict if rich
     if (true == reuse AND (dict_maxsize(d1) - n) > m)
         return dict_copy(d1, d2);
 
-    if (check_if_size_add_overflow(n, m))
+    assert_unsafe_add(n, m, n)
         return NULL;
-    d = dict_new(dest, n+m, dict_load_fact(d1));
+
+    Dict *d = dict_new(dest, n+m, dict_load_fact(d1));
     if (NULL == d)
         return d;
+
     if (NOT dict_copy(d, d1) OR NOT dict_copy(d, d2))
-        return dict_remove(d);
+        return dict_remove(&d);
 
     return d;
 }
@@ -763,7 +790,7 @@ dict_merge(Dict *d1,
     assert(NULL != d1 && NULL != d2);
 
     if (d1 == d2)
-        return dict_copy(DICT_NEW, d1);
+        return dict_copy(NULL, d1);
     return dict_merge_(d1, d2, false);
 }
 
@@ -788,7 +815,6 @@ dict_update(Dict *d1,
         return d1;
     return dict_merge_(d1, d2, true);
 }
-#undef DICT_NEW
 
 #define DICT_VCOPY(d, n, b) (n < dict_size(d) ? dict_ncopy(b, d, n) : dict_copy(b, d)) 
 
@@ -797,15 +823,16 @@ dict_rehash(Dict **dict, size_t n)
 {
     assert(NULL != dict AND NULL != *dict);
 
-    if (0 == n)
-        return dict_remove(*dict);
+    if (0 == n) // a size of zero is the same as remove
+        return dict_remove(dict);
 
     Dict *d = DICT_VCOPY(*dict, n, NULL); 
     if (NULL == d)
         return -1;
 
-    dict_remove(*dict);
-    **dict = *d;
+    dict_remove(dict);
+
+    *dict = d;
     return 0;
 }
 #undef DICT_VCOPY
@@ -815,9 +842,8 @@ dict_resize(Dict *dict, size_t n)
 {
     assert(NULL != dict);
 
-    // a size of zero is the same as remove
     if (NOT n)
-        return dict_remove(dict);
+        return dict_remove(&dict);
     // we are rich! Do nothing
     if (n <= dict_maxsize(dict))
         return 0;
@@ -827,9 +853,10 @@ dict_resize(Dict *dict, size_t n)
 local_inline int
 dict_swapval(Dict *dict, const Type key, Type value, size_t j)
 {
-    Type tmp = DICT_ENTRYRY(dict)->values[j];
+    Type tmp = _Dict_Values(dict)[j];
 
-    DICT_ENTRY(dict)->values[j] = value;
+    _Dict_Values(dict)[j] = value;
+
 #   ifndef NO_PyAPI
     Py_XDECREF(tmp);
     Py_XDECREF(key); // key already exist
@@ -895,7 +922,7 @@ dict_insert(Dict *dict, Type key, Type val, hash_t h)
     assert(NULL != dict);
     assert(NULL != key);
 
-    const Type    khp = dict_khpairs(dict); // key array
+    const Type    khp = _Dict_Keys(dict); // key array
     const cache_t grp = dict_cache(dict); // cache array
 
     const size_t  g   = dict_capacity(dict) - 1;
@@ -935,7 +962,7 @@ dict_insert_deleted(Dict *dict, Type key, Type val, hash_t h)
     bool    f = true; // true if k is unset
     size_t  k = 0; // cache empty or deleted slot index
 
-    const Type    khp = dict_khpairs(dict);
+    const Type    khp = _Dict_Keys(dict);
     const cache_t grp = dict_cache(dict);
 
     const size_t  g   = dict_capacity(dict) - 1;

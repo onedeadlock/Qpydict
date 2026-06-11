@@ -8,19 +8,15 @@
 #    define AND  &&
 #endif
 #ifndef NOT
-#    define NOT !
-#endif
-
-#if defined(_WIN32) OR defined(_WIN64) OR defined(_MSC_VER)
-#    include <intrin.h>
+#    define NOT  !
 #endif
 
 #if defined(__clang__) OR defined(__GNUC__) OR defined(__MINGW32__) OR defined(__MINGW64__)
-#    define HAVE_GCC_COMPILER   1
+#    define HAVE_GCC   1
 #elif defined(_MSC_VER)
-#    define HAVE_MSVC_COMPILER  1
+#    define HAVE_MSVC  1
 #elif defined(INTEL_LLVM_COMPILER)
-#    define HAVE_INTEL_COMPILER 1
+#    define HAVE_INTEL 1
 #endif
 
 #ifndef __has_builtin
@@ -29,8 +25,8 @@
 #ifndef __has_attribute
 #    define __has_attribute(x) 0 
 #endif
-#define has_builtin(x)   (__has_builtin(x)   OR HAVE_GCC_COMPILER)
-#define has_attribute(x) (__has_attribute(x) OR HAVE_GCC_COMPILER)
+#define has_builtin(x)   (__has_builtin(x)   OR HAVE_GCC)
+#define has_attribute(x) (__has_attribute(x) OR HAVE_GCC)
 
 #if has_builtin(__builtin_expect)
 #    define UNLIKELY(x) __builtin_expect(!!(x), 0)
@@ -48,20 +44,26 @@
 #    if defined(_bit_scan_forward)
 #        define BSF(x) _bit_scan_forward(x)
 #    else
+#       define BSF BSF
+//
 static inline __forceinline uint64_t BSF(const uint64_t v)
 {
     uint64_t idx;
     return (_BitScanForward64(&idx, v), idx);
 }
+//
 #    endif
 #    if defined(_bit_scan_reverse)
 #        define BSR(x) _bit_scan_reverse(x)
 #    else
+#       define BSR BSR
+//
 static inline __forceinline uint64_t BSR(const uint64_t v)
 {
     uint64_t idx;
     return (_BitScanReverse64(&idx, v), idx);
 }
+//
 #    endif
 #else
 #     // TODO
@@ -111,9 +113,9 @@ static inline __forceinline uint64_t BSR(const uint64_t v)
 #endif
 
 #if has_attribute(__pure__)
-#    define PURE(x) __attribute__((pure)) x
+#    define pure__ __attribute__((pure))
 #else
-#    define PURE(x) x
+#    define pure__
 #endif
 
 #ifndef local
