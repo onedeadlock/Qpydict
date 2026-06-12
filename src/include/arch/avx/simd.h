@@ -1,16 +1,18 @@
 #ifndef MM_AVX_H
 #define MM_AVX_H
-#include <stdint.h>
-#ifndef MM_SIMD_FLAG
-#if defined(__x86_64__) || defined(__i386__) || defined(__amd__)
+#if !defined(MM_SIMD_FLAG) || !MM_SIMD_FLAG
+
+#if defined(__x86_64__) || defined(__i386__) || defined(__amd__) || defined(_M_AMD64)
 #    include <immintrin.h>
 #endif
 
 #ifdef __AVX__
+#    undef  MM_SIMD_FLAG
 #    define MM_SIMD_FLAG    0x15
+
 #    define MM_NGROUP       32
 #    define MM_KGROUP       5
-#    define MM_KGET(v)      (v)
+#    define MM_IDX(v)       (v)
 
 #    define mm_eq(v, m)    _mm256_cmpeq_epi8(v, m)
 #    define mm_or(v, m)    _mm256_or_si256(v, m)

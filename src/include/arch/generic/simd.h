@@ -1,10 +1,13 @@
 #ifndef MM_GENERIC_SIMD_H
 #define MM_GENERIC_SIMD_H
-#include <stdint.h>
 
-#ifndef MM_SIMD_FLAG
+#if !defined(MM_SIMD_FLAG) || !MM_SIMD_FLAG
+#    include <stdint.h>
+
 #if defined(UINT64_MAX) || (0xffffffffffffffff >> 33) > 0
-#    define MM_SIMD_FLAG        0x45
+#    undef  MM_SIMD_FLAG
+#    define MM_SIMD_FLAG        0x55
+
 #    define MM_NGROUP            8
 #    define MM_KGROUP            3
 #    define MM_IDX(v)       ((v) >> 3)

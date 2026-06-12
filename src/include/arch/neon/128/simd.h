@@ -1,9 +1,11 @@
 #ifndef MM_NEON_128_H
 #define MM_NEON_128_H
-#include "neon.h"
+#include "../neon.h"
 
-#if  defined(HAVE_NEON) && !defined(_NO_NEON_64)
-#    define MM_SIMD_FLAG   0x35
+#if  defined(HAVE_NEON) && defined(_NO_NEON_64)
+#    undef  MM_SIMD_FLAG
+#    define MM_SIMD_FLAG   0x45
+
 #    define MM_NGROUP      16
 #    define MM_KGROUP      4
 #    define MM_IDX(v)      (v)
@@ -20,7 +22,7 @@
 #    define mm_set_null() mm_dup(MM_NULL)
 #    define mm_set_del()  mm_dup(MM_DEL)
 
-#    define mm_mask(v, m)  mm_movemask(mm_equal(v, m))
+#    define mm_mask(v, m)  mm_movemask(mm_eq(v, m))
 
 #    define mm_null_fast(v, z)     mm_mask(v, z)
 #    define mm_mask_null(v, z)     mm_mask(v, z)

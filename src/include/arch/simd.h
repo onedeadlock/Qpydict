@@ -34,7 +34,7 @@
 #if MM_SIMD_FLAG  ==  0
 #   define MM_SUPPORT 0
 #else
-#   define MM_SUPPORT 0
+#   define MM_SUPPORT 1
 #endif
 
  // use AVX for simd op
@@ -62,7 +62,7 @@ typedef uint8x16_t mm_t;
 #endif
 
 // generic fallback with int64 (8 lane)
-#if MM_SIMD_FLAG != 0
+#if MM_SIMD_FLAG != 0 && MM_SIMD_FLAG > 0x45
 typedef uint64_t mask_t;
 typedef uint64_t mm_t;
 #endif

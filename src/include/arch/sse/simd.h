@@ -1,12 +1,13 @@
 #ifndef MM_SSE_H
 #define MM_SSE_H
-#include <stdint.h>
-#ifndef MM_SIMD_FLAG
+#if !defined(MM_SIMD_FLAG) || !MM_SIMD_FLAG
+
 #if defined(__x86_64__) || defined(__i386__) || defined(__amd__)
 #    include <immintrin.h>
 #endif
 
 #ifdef __SSE2__
+#    undef  MM_SIMD_FLAG
 #    define MM_SIMD_FLAG    0x25
 #    define MM_NGROUP       16
 #    define MM_KGROUP       4
