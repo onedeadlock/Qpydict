@@ -11,23 +11,6 @@
 #if defined(MM_SUPPORT) AND (MM_SUPPORT != 0)
 #define Dict  QPyDictObject
 
-/**                     DICT IMPLEMENTATION
- * (1) Internal
- * (2) Rehashing and Resizing
- *  Resizing dict follows the conventional method of resizing containers except every resize is done with alignment to a basic size and a power of 2. Since every size op is a power of 2 and a multiple of group, a resize with a size between say 2^j and 2^k will end up as MUL(2^k, basicsize) (your load factor may also buff things up, be careful!).
- *
- * POV: resizing down is not advicable. In short words, it leaves the container in an unpredictable state (if you don't know what you're doing), so it is better to allocate the much/little size as needed beforehand.
- * In leu with the above, a call to `advice_size_requirement*` functions with your size, should tell you the exact size you get as would use internally after resize. for example:
- *
- * `advice_size_requirement(n)` // returns minimum size that would fit n entries without any future rehash (this is the default, and is so, unless the returned size would overflow)
- *
- * `advice_size_requirement_resize_down(dict)` // return safe size that guarantees no loss in entries
- *
- * ...and the rest.
- * Usually, unless FORCE_RESIZE is defined, resizing down may not actually rehash if it is possible not to. This is unlike rehashing, which rehashes regardless of any change
- */
-
-// GENERAL TODO: check_if_size_add_overflow, NGROUP_MAX
 #define PTR(ptr)   (void *)(ptr)
 #define DPTR(dptr) (*(void **)(dptr))
 #define SHPTR(ptr) (uint16_t *)PTR(ptr)
@@ -87,13 +70,43 @@ local_inline size_t pure__ bsr(const size_t x)
 #endif
 }
 
-local_inline size_t pure__ popcnt(const size_t x)
+local_inline size_t pure__ popcnt64(size_t x)
 {
-#if defined(POPCNT)
+    static const uint64_t f = 0x5555555555555555ULL;
+    static const uint64_t t = 0x3333333333333333ULL;
+    static const uint64_t z = 0x0f0f0f0f0f0f0f0fULL;
+    static const uint64_t o = 0x0101010101010101ULL;
+    
+    x = x  - ((x >> 1) & f);
+    x = (x & t) + ((x >> 2) & t);
+    x = (x + (x >> 4)) & z;
+    x = (x * o) >> 56;
+
+    return x;
+}
+
+local_inline size_t pure__ popcnt32(size_t x)
+{
+    static const uint32_t f = 0x55555555U;
+    static const uint32_t t = 0x33333333U;
+    static const uint32_t z = 0x0f0f0f0fU;
+    
+    x = x  - ((x >> 1) & f);
+    x = (x & t) + ((x >> 2) & t);
+    x = (x + (x >> 4)) & z;
+    x = (x * 0x1010101) >> 24;
+
+    return x;
+}
+
+local_inline size_t pure__ popcnt(size_t x)
+{
+#if POPCNT
     return  POPCNT(x);
+#elif SBIT == 64
+    return popcnt64(x);
 #else
-    // TODO
-#endif
+    return popcnt32(x);
 }
 
 local_inline const size_t

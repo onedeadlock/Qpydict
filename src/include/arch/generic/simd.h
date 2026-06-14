@@ -4,6 +4,8 @@
 #if !defined(MM_SIMD_FLAG) || !MM_SIMD_FLAG
 #    include <stdint.h>
 
+/** Caveat: The operations below should be performed on unsigned int. For smaller than 64 bits types, the constants, from @OD_ - @B7_ must be reduced to fit any of such. */
+
 #if defined(UINT64_MAX) || (0xffffffffffffffff >> 33) > 0
 #    undef  MM_SIMD_FLAG
 #    define MM_SIMD_FLAG        0x55
@@ -28,10 +30,12 @@
 
 #    define mm_set_null()       mm_dup(MM_NULL)
 #    define mm_set_del()        mm_dup(MM_DEL)
+  
+#    define mm_zmovemask_fast(v) mm_and((v - LO_), mm_and(~v,  HI_)) // Has Zero test (after benchmark, this is not much faster (x1.01) than my version below, but i'll still keep it here, and in use)
+#    define mm_zmovemask(v)      mm_and(mm_or(mm_or(v, EV_) - OD_, mm_or(v, OD_) - EV_), mm_and(~v, HI_)) // with correct indices
+#    // _mm_movemask
+#    define mm_movemask(v)       mm_zmovemask(mm_xor(~mm_and(x, HI_), B7_))
 
-     // like _mm_movemask but extract from only zero bytes rather than bytes with set MSB 
-#    define mm_zmovemask_fast(v) mm_and((v - LO_), mm_and(~v,  HI_)) // makes false-true indices
-#    define mm_zmovemask(v)      mm_and(mm_or(mm_or(v, EV_) - OD_, mm_or(v, OD_) - EV_), mm_and(~v, HI_))
 #    define mm_mask(v, m)        mm_zmovemask(mm_xor(v, m))
 
 #    if defined(MM_NULL) && (0xff == MM_NULL)
