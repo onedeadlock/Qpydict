@@ -63,10 +63,30 @@ local_inline size_t pure__ ppot(size_t x)
 
 local_inline size_t pure__ bsr(const size_t x)
 {
-#if defined(BSR)
-    return  BSR(x);
+#   ifndef BSR
+    // De Bruijn Table
+    static const uint8_t DBT64[64] = {
+        0,  47,  1, 56, 48, 27,  2, 60,
+        57, 49, 41, 37, 28, 16,  3, 61,
+        54, 58, 35, 52, 50, 42, 21, 44,
+        38, 32, 29, 23, 17, 11,  4, 62,
+        46, 55, 26, 59, 40, 36, 15, 53,
+        34, 51, 20, 43, 31, 22, 10, 45,
+        25, 39, 14, 33, 19, 30,  9, 24,
+        13, 18,  8, 12,  7,  6,  5, 63
+    };
+
+    // set all bits [b_0, b_msb)
+    x |= x >> 1;
+    x |= x >> 2;
+    x |= x >> 4;
+    x |= x >> 8;
+    x |= x >> 16;
+    x |= x >> 32;
+
+    return DBT64[(x * 0x03f79d71b4cb0a89ULL) >> 58];
 #else
-    // TODO
+    return BSR(x);
 #endif
 }
 
@@ -108,6 +128,140 @@ local_inline size_t pure__ popcnt(size_t x)
 #else
     return popcnt32(x);
 }
+
+#define I64  (const    uint64_t)
+#define I128 (const __uint128_t)
+
+#if HAVE_INT128 OR (HAVE_MSVC AND (defined(_M_X64) OR defined(_M_ARM64)))
+local_inline const uint64_t smul128(const uint64_t x, const uint64_t y, uint64_t *hi)
+{
+    // Mul128 and split result into high and low 64 bits
+
+#if   HAVE_MSVC AND defined(_M_X64)
+    return _umul128(x, y, hi);
+#elif HAVE_MSVC AND defined(_M_ARM64)
+    *hi = _umulhi(x, y);
+    return x * y;
+#else HAVE_INT128
+    const __uint128_t m = I128(x) * I128(y);
+    *hi  = I64(m >> 64);
+    return I64(m);
+#endif
+}
+
+local_inline uint64_t wyhash_mix(uint64_t x, uint64_t y)
+{
+    return mul128(x, y, &y) ^ y;
+}
+#  // WYHASH (requires __uint128_t extension)
+local hash_wyhash(void *key, size_t len, uint64_t seed)
+{
+    static const c1 = 0x2d358dccaa6c78a5ULL;
+    static const c2 = 0x8bb84b93962eacc9ULL;
+    static const c3 = 0x4b33a62ed433d4a3ULL;
+    static const c4 = 0x4d5a2da51de1aa47ULL;
+
+    uint8_t *kp = key;
+    uint64_t hi, lo, x=0, y=0;    
+
+    seed ^= wyhash_mix(seed ^ c1, c2);
+
+    if (len <= 16)
+    {
+        // Create Two 64bits from Key
+        if (len >= 4)
+        {
+            memcpy(&hi, kp, 4);
+            memcpy(&lo, kp+((len>>3) << 2), 4);
+            x = hi << 32 | lo; //1
+            memcpy(&hi, kp+len-4, 4);
+            memcpy(&lo, kp+len-4-((len>>3) << 2), 4);
+            y = hi << 32 | lo; //2
+        }
+        else if (len > 0)
+        {
+            // y = 0
+            x  = I64(kp[0]) << 16 | I64(kp[k >> 1]) << 8;
+            x |= kp[k - 1];
+        }
+    }
+    else if (len >= 48)
+    {
+        uint8_t *xp = kp;
+        uint64_t s1=seed, s2=seed, i=len;
+        for (; i >= 48; i-=48, xp+=48)
+            {
+                // Mix 48 Bytes of Key at Once
+
+                memcpy(&lo, xp+0, 8); // load 8 bytes
+                memcpy(&hi, xp+8, 8);
+                seed = wyhash_mix(lo ^ c2, hi ^ seed);
+                // unrolled with c2
+                memcpy(&lo, xp+16, 8);
+                memcpy(&hi, xp+24, 8);
+                s1 = wyhash_mix(lo ^ c3, hi ^ s1);
+                // unrolled with c3
+                memcpy(&lo, xp+32, 8);
+                memcpy(&hi, xp+40, 8);
+                s2 = wyhash_mix(lo ^ c4, hi ^ s2);
+            }
+        seed ^= s1 ^ s2;
+        for (; i > 16; i-=16, pp+=16)
+        {
+            // Mix 16 Bytes at Once
+            memcpy(&lo, xp+0, 8);
+            memcpy(&hi, xp+8, 8);
+            seed = wyhash_mix(lo ^ c2, hi ^ seed);
+        }
+        memcpy(&hi, xp+(i-16), 8);
+        memcpy(&lo, xp+(i-8),  8);
+        x = hi, y = lo;
+    }
+    x ^= c1;
+    y ^= seed;
+    x = mul128(x, y, &y);
+
+    return wyhash_mix(x ^ c1 ^ len, y ^ c2);
+}
+#else
+#  // MurmurHash64A (fallback)
+uint64_t hash_mmh64a(void *const key, size_t len, uint64_t seed) {
+    const uint64_t c1 = 0xc6a4a7935bd1e995ULL;
+    const uint8_t  r = 47;
+    const size_t   n  = len / 8;
+    const uint8_t *kp = key, tp = kp + n * 8;
+
+    uint64_t h = seed ^ (len * c1);
+
+    for (uint64_t x=0, i=0; i < nb; i++)
+    {
+        memcpy(&x, kp + (i << 3), 1);
+        x *= c1;
+        x ^= x >> r;
+        x *= c1;
+        h ^= x;
+        h *= c1;
+    }
+
+    switch (len & 7) {
+    case 7: h ^= I64(tp[6]) << 48;
+    case 6: h ^= I64(tp[5]) << 40;
+    case 5: h ^= I64(tp[4]) << 32;
+    case 4: h ^= I64(tp[3]) << 24;
+    case 3: h ^= I64(tp[2]) << 16;
+    case 2: h ^= I64(tp[1]) << 8;
+    case 1: h ^= I64(tp[0]); h *= c1;
+    }
+
+    h ^= h >> r;
+    h *= c1;
+    h ^= h >> r;
+
+    return h;
+}
+#endif
+#undef I64
+#undef I128
 
 local_inline const size_t
 max_size(const size_t n, const float f)
@@ -161,8 +315,10 @@ static Dict const dict_Local_null_Dict = {
 local mm_t dict_Local_null_set;
 local mm_t dict_Local_del_set;
 
+#ifndef NO_PyAPI
 local PyObject *dict_Local_Py_addnote = NULL;
 local PyObject *dict_Local_Py_key     = NULL;
+#endif
 
 local_inline void
 dict_set_Local(void)

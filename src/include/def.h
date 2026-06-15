@@ -1,5 +1,5 @@
-#ifndef QPy_DEFS_H
-#define QPy_DEFS_H
+#ifndef DEFINITION_H
+#define DEFINITION_H
 
 #ifndef OR
 #    define OR   ||
@@ -9,6 +9,10 @@
 #endif
 #ifndef NOT
 #    define NOT  !
+#endif
+
+#ifdef __SIZEOF_INT128__
+#    define HAVE_INT128
 #endif
 
 #if defined(__clang__) OR defined(__GNUC__) OR defined(__MINGW32__) OR defined(__MINGW64__)
@@ -40,36 +44,27 @@
 #    define BSF(x)    __builtin_clzll(x)
 #    define BSR(x)    __builtin_ctzll(x)
 #    define POPCNT(x) __builtin_popcountll(x)
-#elif HAVE_INTEL_COMPILER OR HAVE_MSVC_COMPILER
+#elif HAVE_INTEL OR HAVE_MSVC
 #    if defined(_bit_scan_forward)
 #        define BSF(x) _bit_scan_forward(x)
 #    else
-#       define BSF BSF
-//
+#        define BSF BSF
 static inline __forceinline uint64_t BSF(const uint64_t v)
 {
     uint64_t idx;
     return (_BitScanForward64(&idx, v), idx);
 }
-//
 #    endif
-#    if defined(_bit_scan_reverse)
+#    ifdef _bit_scan_reverse
 #        define BSR(x) _bit_scan_reverse(x)
 #    else
-#       define BSR BSR
-//
+#        define BSR BSR
 static inline __forceinline uint64_t BSR(const uint64_t v)
 {
     uint64_t idx;
     return (_BitScanReverse64(&idx, v), idx);
 }
-//
 #    endif
-#else
-#     // TODO
-#    define BSF(x)
-#    define BSR(x) 
-#    define POPCNT(x) 
 #endif
 
 #if has_builtin(__builtin_unreachable)
@@ -80,21 +75,20 @@ static inline __forceinline uint64_t BSR(const uint64_t v)
 #    define UNREACHABLE()
 #endif
 
-// align to a multiple of d, where d is a power of 2. v is unchange if d already satisfies the alignment
 #define ALIGN(v, d)  ((v)  - ((v) & (d) - 1)) // down
 #define ALIGNU(v, d) (((n) + (d) - 1) & ~((d) - 1)) // up
 
-#if has_builtin(__builtin_add_overflow_p) && has_builtin(__builtin_mul_overflow_p)
-#   define check_if_safe_add(x, y, hint) !__builtin_add_overflow_p(x, y, hint)
-#   define check_if_safe_mul(x, y, hint) !__builtin_mul_overflow_p(x, y, hint) 
-#else // TODO
-#   define check_if_safe_add(x, y, type) 0
-#   define check_if_safe_mul(x, y, type) 0
+#if has_builtin(__builtin_add_overflow_p)
+#   define HAVE_ADDCHECK 1
+#endif
+
+#if has_builtin(__builtin_mul_overflow_p)
+#    define HAVE_MULCHECK 1
 #endif
 
 #if has_attribute(__always_inline__)
 #    define force_inline __attribute__((always_inline))
-#elif HAVE_MSVC_COMPILER
+#elif HAVE_MSVC
 #    define force_inline __forceinline
 #else 
 #    define force_inline 
@@ -138,4 +132,4 @@ static inline __forceinline uint64_t BSR(const uint64_t v)
 
 #undef has_builtin
 #undef has_attribute
-#endif // QPy_DEFS_H
+#endif // DEFINITION_H
