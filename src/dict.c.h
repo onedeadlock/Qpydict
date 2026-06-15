@@ -230,7 +230,7 @@ uint64_t hash_mmh64a(void *const key, size_t len, uint64_t seed) {
     const uint64_t c1 = 0xc6a4a7935bd1e995ULL;
     const uint8_t  r = 47;
     const size_t   n  = len / 8;
-    const uint8_t *kp = key, tp = *kp + n * 8;
+    const uint8_t *kp = key, *tp = kp + n * 8;
 
     uint64_t h = seed ^ (len * c1);
 
