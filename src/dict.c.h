@@ -218,7 +218,7 @@ local hash_wyhash(void *key, size_t len, uint64_t seed)
         memcpy(&lo, xp+(i-8),  8);
         x = hi, y = lo;
     }
-    x ^= c1;
+    x ^= c2;
     y ^= seed;
     x = smul128(x, y, &y);
 
