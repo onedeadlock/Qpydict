@@ -19,10 +19,14 @@
 
 #define PLUSNGROUP(x) ((x) + NGROUP)
 
-#if defined(SIZE_MAX) AND (SIZE_MAX > 0xffffffffU)
-#   define SBIT 64
-#else
-#   define SBIT 32
+#if defined(SIZE_MAX)
+#   if   SIZE_MAX > 0xffffffffU
+#      define SBIT 64
+#   elif SIZE_MAX == 0xffffffffU 
+#      define SBIT 32
+#   else
+#       error expected sizeof size_t to be atleast 32 bits
+#   endif
 #endif
 
 local_inline size_t pure__ npot(size_t x)
@@ -182,7 +186,7 @@ local hash_wyhash(void *key, size_t len, uint64_t seed)
             x |= kp[len - 1];
         }
     }
-    else if (len >= 48)
+    else
     {
         uint8_t *xp = kp;
         uint64_t s1=seed, s2=seed, i=len;
