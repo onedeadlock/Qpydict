@@ -167,10 +167,10 @@ local hash_wyhash(void *key, size_t len, uint64_t seed)
 
     seed ^= wyhash_mix(seed ^ c1, c2);
 
-    if (len <= 16)
+    if (LIKELY(len <= 16))
     {
         // Create Two 64bits from Key
-        if (len >= 4)
+        if (LIKELY(len >= 4))
         {
             memcpy(&hi, kp, 4);
             memcpy(&lo, kp+((len>>3) << 2), 4);
