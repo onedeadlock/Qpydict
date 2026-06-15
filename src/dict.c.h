@@ -11,12 +11,9 @@
 #if defined(MM_SUPPORT) AND (MM_SUPPORT != 0)
 #define Dict  QPyDictObject
 
+#define _N_GROUP MM_NGROUP
 #define PTR(ptr)   (void *)(ptr)
 #define DPTR(dptr) (*(void **)(dptr))
-#define SHPTR(ptr) (uint16_t *)PTR(ptr)
-#define LONG(x)    (long)(x)
-
-#define _N_GROUP NGROUP
 #define DCR(x) --(x)
 #define ICR(x) ++(x)
 
@@ -61,7 +58,7 @@ local_inline size_t pure__ ppot(size_t x)
 }
 #undef SBIT
 
-local_inline size_t pure__ bsr(const size_t x)
+local_inline size_t pure__ bsr(size_t x)
 {
 #   ifndef BSR
     // De Bruijn Table
@@ -206,7 +203,7 @@ local hash_wyhash(void *key, size_t len, uint64_t seed)
                 s2 = wyhash_mix(lo ^ c4, hi ^ s2);
             }
         seed ^= s1 ^ s2;
-        for (; i > 16; i-=16, pp+=16)
+        for (; i > 16; i-=16, xp+=16)
         {
             // Mix 16 Bytes at Once
             memcpy(&lo, xp+0, 8);
