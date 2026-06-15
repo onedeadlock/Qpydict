@@ -25,7 +25,7 @@
 #   define SBIT 32
 #endif
 
-local_inline size_t pure__ npot(const size_t x)
+local_inline size_t pure__ npot(size_t x)
 {
     // next power of two
     assert(x != 0); // x must not be zero
@@ -148,7 +148,7 @@ local_inline const uint64_t smul128(const uint64_t x, const uint64_t y, uint64_t
 
 local_inline uint64_t wyhash_mix(uint64_t x, uint64_t y)
 {
-    return mul128(x, y, &y) ^ y;
+    return smul128(x, y, &y) ^ y;
 }
 #  // WYHASH (requires __uint128_t extension)
 local hash_wyhash(void *key, size_t len, uint64_t seed)
@@ -178,8 +178,8 @@ local hash_wyhash(void *key, size_t len, uint64_t seed)
         else if (len > 0)
         {
             // y = 0
-            x  = I64(kp[0]) << 16 | I64(kp[k >> 1]) << 8;
-            x |= kp[k - 1];
+            x  = I64(kp[0]) << 16 | I64(kp[len>>1]) << 8;
+            x |= kp[len - 1];
         }
     }
     else if (len >= 48)
@@ -216,7 +216,7 @@ local hash_wyhash(void *key, size_t len, uint64_t seed)
     }
     x ^= c1;
     y ^= seed;
-    x = mul128(x, y, &y);
+    x = smul128(x, y, &y);
 
     return wyhash_mix(x ^ c1 ^ len, y ^ c2);
 }
