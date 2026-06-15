@@ -234,7 +234,7 @@ uint64_t hash_mmh64a(void *const key, size_t len, uint64_t seed) {
 
     uint64_t h = seed ^ (len * c1);
 
-    for (uint64_t x=0, i=0; i < nb; i++)
+    for (uint64_t x=0, i=0; i < n; i++)
     {
         memcpy(&x, kp + (i << 3), 1);
         x *= c1;
