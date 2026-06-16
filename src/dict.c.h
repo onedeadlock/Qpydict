@@ -173,10 +173,10 @@ local hash_wyhash(void *key, size_t len, uint64_t seed)
 
     seed ^= wyhash_mix(seed ^ c1, c2);
 
-    if (len <= 16)
+    if (LIKELY(len <= 16))
     {
         // Create Two 64bits from Key
-        if (len >= 4)
+        if (LIKELY(len >= 4))
         {
             memcpy(&hi, kp, 4);
             memcpy(&lo, kp+((len>>3) << 2), 4);
@@ -224,7 +224,7 @@ local hash_wyhash(void *key, size_t len, uint64_t seed)
         memcpy(&lo, xp+(i-8),  8);
         x = hi, y = lo;
     }
-    x ^= c1;
+    x ^= c2;
     y ^= seed;
     x = smul128(x, y, &y);
 
@@ -236,13 +236,13 @@ uint64_t hash_mmh64a(void *const key, size_t len, uint64_t seed) {
     const uint64_t c1 = 0xc6a4a7935bd1e995ULL;
     const uint8_t  r  = 47;
     const size_t   n  = len / 8;
-    const uint8_t *kp = key, tp = kp + n * 8;
+    const uint8_t *kp = key, *tp = kp + n * 8;
 
     uint64_t h = seed ^ (len * c1);
 
-    for (uint64_t x=0, i=0; i < nb; i++)
+    for (uint64_t x=0, i=0; i < n; i++)
     {
-        memcpy(&x, kp + (i << 3), 1);
+        memcpy(&x, kp + (i << 3), 8);
         x *= c1;
         x ^= x >> r;
         x *= c1;
