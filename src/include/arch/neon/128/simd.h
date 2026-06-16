@@ -22,12 +22,12 @@
 #    define mm_set_null() mm_dup(MM_NULL)
 #    define mm_set_del()  mm_dup(MM_DEL)
 
-#    define mm_mask(v, m)  mm_movemask(mm_eq(v, m))
+#    define mm_cmp(v, m)  mm_movemask(mm_eq(v, m))
 
-#    define mm_null_fast(v, z)     mm_mask(v, z)
-#    define mm_mask_null(v, z)     mm_mask(v, z)
-#    define mm_mask_del(v, m, z)   mm_mask(mm_and(v, m), z)
-#    define mm_mask_full(v, m, z) (mm_mask_del(v, m, z) ^ HI_)
+#    define mm_null_fast(v, z)    mm_cmp(v, z)
+#    define mm_cmp_null(v, z)     mm_cmp(v, z)
+#    define mm_cmp_del(v, m, z)   mm_cmp(mm_and(v, m), z)
+#    define mm_cmp_full(v, m, z) (mm_cmp_del(v, m, z) ^ HI_)
 #
 static inline uint16_t
 mm_movemask(const uint8x16_t v)

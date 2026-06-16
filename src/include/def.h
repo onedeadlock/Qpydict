@@ -1,5 +1,6 @@
 #ifndef DEFINITION_H
 #define DEFINITION_H
+#include <stdint.h>
 
 #ifndef OR
 #    define OR   ||
@@ -17,10 +18,10 @@
 
 #if defined(__clang__) OR defined(__GNUC__) OR defined(__MINGW32__) OR defined(__MINGW64__)
 #    define HAVE_GCC   1
+#elif defined(INTEL_LLVM_COMPILER) || defined(__INTEL_COMPILER)
+#    define HAVE_INTEL 1
 #elif defined(_MSC_VER)
 #    define HAVE_MSVC  1
-#elif defined(INTEL_LLVM_COMPILER)
-#    define HAVE_INTEL 1
 #endif
 
 #ifndef __has_builtin
@@ -40,31 +41,24 @@
 #    define LIKELY(x)   (x)
 #endif
 
-#if has_builtin(__builtin_clzll)
+#if has_builtin(__builtin_clzll) OR HAVE_INTEL
 #    define BSF(x)    __builtin_clzll(x)
 #    define BSR(x)    __builtin_ctzll(x)
 #    define POPCNT(x) __builtin_popcountll(x)
-#elif HAVE_INTEL OR HAVE_MSVC
-#    if defined(_bit_scan_forward)
-#        define BSF(x) _bit_scan_forward(x)
-#    else
-#        define BSF BSF
+#elif HAVE_MSVC AND defined(_M_X64)
+#    define BSF BSF
+#    define BSR BSR
 static inline __forceinline uint64_t BSF(const uint64_t v)
 {
     uint64_t idx;
-    return (_BitScanForward64(&idx, v), idx);
+    return _BitScanForward64(&idx, v), idx;
 }
-#    endif
-#    ifdef _bit_scan_reverse
-#        define BSR(x) _bit_scan_reverse(x)
-#    else
-#        define BSR BSR
+
 static inline __forceinline uint64_t BSR(const uint64_t v)
 {
     uint64_t idx;
-    return (_BitScanReverse64(&idx, v), idx);
+    return _BitScanReverse64(&idx, v), idx;
 }
-#    endif
 #endif
 
 #if has_builtin(__builtin_unreachable)
@@ -75,15 +69,12 @@ static inline __forceinline uint64_t BSR(const uint64_t v)
 #    define UNREACHABLE()
 #endif
 
-#define ALIGN(v, d)  ((v)  - ((v) & (d) - 1)) // down
-#define ALIGNU(v, d) (((n) + (d) - 1) & ~((d) - 1)) // up
-
 #if has_builtin(__builtin_add_overflow_p)
-#   define HAVE_ADDCHECK 1
+#   define HAVE_BUILTIN_ADDP 1
 #endif
 
 #if has_builtin(__builtin_mul_overflow_p)
-#    define HAVE_MULCHECK 1
+#    define HAVE_BUILTIN_MULP 1
 #endif
 
 #if has_attribute(__always_inline__)
@@ -118,6 +109,9 @@ static inline __forceinline uint64_t BSR(const uint64_t v)
 #ifndef local_inline
 #    define local_inline static inline force_inline
 #endif
+
+#define ALIGN(v, d)  ((v)  - ((v) & (d) - 1))       // down
+#define ALIGNU(v, d) (((n) + (d) - 1) & ~((d) - 1)) // up
 
 // logging
 #ifndef NDEBUG

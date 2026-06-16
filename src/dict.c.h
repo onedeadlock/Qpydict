@@ -29,6 +29,12 @@
 #   endif
 #endif
 
+enum {
+    DICT_ERCMP    = -1,
+    DICT_EROINT   = -2,
+    DICT_ERMALLOC = -3
+};
+
 local_inline size_t pure__ npot(size_t x)
 {
     // next power of two
@@ -62,7 +68,7 @@ local_inline size_t pure__ ppot(size_t x)
 }
 #undef SBIT
 
-local_inline size_t pure__ bsr(size_t x)
+local_inline size_t pure__ bsr(uint64_t x)
 {
 #   ifndef BSR
     // De Bruijn Table
@@ -228,7 +234,7 @@ local hash_wyhash(void *key, size_t len, uint64_t seed)
 #  // MurmurHash64A (fallback)
 uint64_t hash_mmh64a(void *const key, size_t len, uint64_t seed) {
     const uint64_t c1 = 0xc6a4a7935bd1e995ULL;
-    const uint8_t  r = 47;
+    const uint8_t  r  = 47;
     const size_t   n  = len / 8;
     const uint8_t *kp = key, tp = kp + n * 8;
 
@@ -264,10 +270,13 @@ uint64_t hash_mmh64a(void *const key, size_t len, uint64_t seed) {
 #undef I64
 #undef I128
 
+#define assert_unsafe_add(x, y) if (NOT((x) < SIZE_MAX - (y)))
+#define assert_unsafe_mul(x, y) if ((x) AND (y) > SIZE_MAX / (x))
+
 local_inline const size_t
 max_size(const size_t n, const float f)
 {
-    assert(.0 != f);
+    assert(0. != f);
     // maximum size that will not trigger rehash
     return npot(n / f);
 }
@@ -275,15 +284,11 @@ max_size(const size_t n, const float f)
 local_inline size_t
 basic_size(const size_t n,   // size
            const size_t max, // max object size
-           const float  f)   // load fsctor
+           const float  f)   // load factor
 {
     if (0 == n) return n;
-
     const size_t mx = max_size(n, f);
-
-    assert_unsafe_mul(mx, max, mx)
-        return 0;
-
+    assert_unsafe_mul(mx, max) return 0;
     return mx;
 }
 
@@ -293,7 +298,7 @@ advice_size(const size_t n, const float f)
     return max_size(n, f);
 }
 
-local cache_t const dict_Local_null_group[NGROUP_MAX] = {
+local cache_t const dict_Local_Null_group[NGROUP_MAX] = {
 #   define k DICT_NULL
 #   define s DICT_SENT
     s, k, k, k, k, k, k, k, k,
@@ -304,17 +309,17 @@ local cache_t const dict_Local_null_group[NGROUP_MAX] = {
 #   undef s
 };
 
-local khpair_t const dict_Local_null_key[2] = {0};
-local Type     const dict_Local_null_val[2] = {0};
+local khpair_t const dict_Local_Null_key[2] = {0};
+local Type     const dict_Local_Null_val[2] = {0};
 
-static Dict const dict_Local_null_Dict = {
-    .entries.cache   = &dict_Local_null_group,
-    .entries.key     = dict_Local_null_key + 1,
-    .entries.values  = dict_Local_null_val + 1
+static Dict const dict_Local_Null_Dict = {
+    .entries.cache   = &dict_Local_Null_group,
+    .entries.key     =  dict_Local_Null_key + 1,
+    .entries.values  =  dict_Local_Null_val + 1
 };
 
-local mm_t dict_Local_null_set;
-local mm_t dict_Local_del_set;
+local mm_t dict_Local_Null_set;
+local mm_t dict_Local_Del_set;
 
 #ifndef NO_PyAPI
 local PyObject *dict_Local_Py_addnote = NULL;
@@ -324,12 +329,12 @@ local PyObject *dict_Local_Py_key     = NULL;
 local_inline void
 dict_set_Local(void)
 {
-    dict_Local_null_set = mm_set_null();
-    dict_Local_del_set  = mm_set_del();
+    dict_Local_Null_set = mm_set_null();
+    dict_Local_Del_set  = mm_set_del();
 
     // make read-only
-#   define dict_Local_null_set (true, dict_Local_null_set)
-#   define dict_Local_del_set  (true, dict_Local_del_set)
+#   define dict_Local_Null_set (true, dict_Local_Null_set)
+#   define dict_Local_Del_set  (true, dict_Local_Del_set)
 
 #ifndef NO_PyAPI
     dict_Local_Py_addnote = PyUnicode_FromString("add_note");
@@ -365,22 +370,28 @@ local_inline mask_t load_group(const void *v)
 local_inline mask_t
 cmp_group(const mm_t group, const mm_t mask)
 {
-    return mm_mask(group, mask);
+    return mm_cmp(group, mask);
 }
 
 local_inline mask_t cmp_null(const mm_t group)
 {
-    return mm_mask_null(group, dict_Local_null_set);
+    return mm_cmp_null(group, dict_Local_Null_set);
 }
 
 const local_inline bool has_null(const mm_t group)
 {
-    return mm_null_fast(group, dict_Local_null_set);
+    return mm_null_fast(group, dict_Local_Null_set);
 }
 
 local_inline mask_t cmp_full(const mm_t group)
 {
-    return mm_mask_full(group, dict_Local_del_set, dict_Local_null_set);
+    return mm_cmp_full(group, dict_Local_Del_set, dict_Local_Null_set);
+}
+
+local_inline mask_t load_cmp_full(const void *group)
+{
+    const mm_t v = mm_load(group);
+    return mm_cmp_full(v, dict_Local_Del_set, dict_Local_Null_set);
 }
 
 local_inline const uint8_t mbsr(const mask_t mask)
@@ -441,30 +452,27 @@ dict_set_load_fact(Dict *dict, const float f)
 
     if (BAD_LOADFACT(f))
         return -1;
-
     dict->max_size = dict->capacity * lf;
-
     return 0;
 }
 
 local_inline void
-dict_set_size(Dict *dict, const size_t n)
+dict_set_size(Dict *dict, size_t n)
 {
     assert(NULL != dict);
-
-    dict->used_size = n | 0;
+    dict->used_size = n;
 }
 
 #define _Dict_keys(d)   (true, (d)->entries.kh)
 #define _Dict_cache(d)  (true, (d)->entries.cache)
 #define _Dict_values(d) ((d)->entries.values)
 
-local_inline void _Dict_Fl_set_alloc(Dict *dict)
+local_inline void _Dict_set_flag_alloc(Dict *dict)
 {
     dict->flags |= 0x80;
 }
 
-local_inline bool _Dict_Fl_have_alloc(const Dict *dict)
+local_inline bool _Dict_have_flag_alloc(const Dict *dict)
 {
     return dict->flags & 0x80;
 }
@@ -556,7 +564,6 @@ local void dict_aligned_free(void *ptr)
     if (ptr == NULL)
         return;
     const short mx = ((short *)ptr)[-1];
-
     return free((void *)(INTPTR(mx) - mx));
 }
 #undef INTPTR
@@ -591,11 +598,9 @@ warn_unused local_inline void *
 dict_cmalloc(void *dp, const size_t n)
 {
     assert(0 != n);
+    assert_unsafe_add(n, _N_GROUP) return NULL;
 
-    assert_unsafe_add(n, NGROUP, n)
-        return NULL;
-
-    void *ptr = dict_memset_alloc(n+NGROUP, NGROUP, DICT_EMPTY);
+    void *ptr = dict_memset_alloc(n+_N_GROUP, _N_GROUP, DICT_NULL);
 
     return DKTO_PTR(ptr, dp);
 }
@@ -619,7 +624,7 @@ dict_malloc_self_(void *UNUSED(type), size_t UNUSED(n))
 #  endif
 
     if (NULL != self)
-        _Dict_Fl_set_alloc(self);
+        _Dict_set_flag_alloc(self);
 
     return self;
 }
@@ -631,7 +636,7 @@ local_inline void *dict_free_self_(void *dp)
 
     Dict *self = *(Dict **)dp;
 
-    if (NULL == self OR NOT _Dict_Fl_have_alloc(self))
+    if (NULL == self OR NOT _Dict_have_flag_alloc(self))
         return NULL;
 
 #  ifndef NO_PyAPI
@@ -673,8 +678,8 @@ local_inline int dict_malloc_ckhv(cache_t  **c,
         NOT dict_malloc(kh, n * sizeof(khpair_t)))
         return dict_cfree(c), dict_free(v), -1; // failed
 
-    **v  = dict_Local_null_val;
-    **kh = dict_Local_null_key;
+    **v  = dict_Local_Null_val;
+    **kh = dict_Local_Null_key;
     *v  += 1;
     *kh += 1;
 
@@ -686,17 +691,16 @@ local_inline int dict_malloc_ckhv(cache_t  **c,
 local_inline void dict_free_ckhv_in_entry(Dict *dict)
 {
     assert(NULL != dict);
-    if (_Dict_Fl_have_alloc(dict))
+    if (NOT _Dict_have_flag_alloc(dict))
         return;
-    entry_t *e = DICT_ENTR(dict);
-
+    const entry_t *e = DICT_ENTRY(dict);
     return dict_free_ckhv(e->cache, e->values, e->kh);
 }
 
 local_inline int dict_unset(Dict **dict)
 {
     assert(NULL != dict);
-    *dict = &dict_Local_null_Dict;
+    *dict = &dict_Local_Null_Dict;
     return 0;
 }
 
@@ -708,16 +712,16 @@ dict_set(Dict **dict, size_t n, float f)
     entry_t *e = DICT_ENTRY(*dict);
     void   *kh = &(e->kh), *v = &(e->values), *c = &(e->cache);
 
-    if (NOT _Dict_Fl_have_alloc(*dict) OR BAD_LOADFACT(f))
+    if (NOT _Dict_have_flag_alloc(*dict) OR BAD_LOADFACT(f))
         return -1;
-    if (0 == n) return dict_unset(dict);
+    if (0 == n)
+        return dict_unset(dict);
     n = basic_size(n, sizeof(khpair_t), f);
     if (0 == n)
         return -1;
 
     if (NOT dict_malloc_ckhv(c, v, kh, n))
         return -1;
-
     dict_setcap(*dict, n, 0, f);
     return 0;
 }
@@ -738,7 +742,7 @@ dict_map(Dict *dict,
     const size_t n = dict_capacity(dict);
 
     for (size_t j, i=0; i < n; i+=_N_GROUP)
-        for (mask_t m = cmp_full(load_group(grp + i)); m; m &= m - 1)
+        for (mask_t m = load_cmp_full(grp + i); m; m &= m - 1)
         {
             j = i + mbsr(m);
             if (do_fn(khp[j].key, vp[j], arg))
@@ -750,8 +754,7 @@ dict_map(Dict *dict,
 local_inline size_t
 dict_count_used(Dict *dict, size_t n)
 {
-    assert(n > dict_capacity(dict));
-    if (0 == n)
+    if (0 == n OR n >= dict_capacity(dict))
         return dict_size(dict);
 
     const cache_t grp = _Dict_cache(dict);
@@ -760,8 +763,8 @@ dict_count_used(Dict *dict, size_t n)
 
     for (size_t i=0; i < j; i+=_N_GROUP)
     {
-        mask_t m  = cmp_full(load_group(grp + i));
-        if (m) k += popcnt(m); // TODO
+        mask_t m  = load_cmp_full(grp + i);
+        k += popcnt(m); // TODO
     }
     return k;
 }
@@ -777,7 +780,7 @@ dict_new(void **type, ssize_t n, float lf)
     set = false; // set once
 
     if (NOT n)
-        return &dict_Local_null_Dict;
+        return &dict_Local_Null_Dict;
 
     dict = dict_malloc_self_(type, 0);
     if (NULL == dict)
@@ -796,7 +799,7 @@ local_inline void dict_Py_release_kv_ref(Dict *dict)
     const size_t  n   = dict_capacity(dict);
 
     for (size_t j, i=0; i < n; i+=_N_GROUP)
-        for (mask_t m = cmp_full(load_group(grp + i)); m; m &= m - 1)
+        for (mask_t m = load_cmp_full(grp+i); m; m &= m - 1)
         {
             j = i + mbsr(m);
             const khpair_t k  = _Dict_keys(dict)[j].key;
@@ -820,7 +823,7 @@ local void *dict_remove(Dict **dict)
     assert(NULL != dict);
 
     Dict *d = *dict;
-    if (NULL == d OR NOT _Dict_Fl_have_alloc(d))
+    if (NULL == d OR NOT _Dict_have_flag_alloc(d))
         return NULL;
 
 # ifdef NO_PyAPI
@@ -841,7 +844,7 @@ dict_copy_insert_n_(Dict * restrict dest,
     const cache_t grp = _Dict_cache(dict);
 
     for (size_t j, k=n, i=0; i < n; i+=_N_GROUP) // TODO: align(n)
-        for (mask_t m = cmp_full(load_group(grp + i)); m; m &= m - 1)
+        for (mask_t m = load_cmp_full(grp+i); m; m &= m - 1)
         {
             j = i + mbsr(m);
             const khpair_t kh = _Dict_keys(dict)[j];
@@ -864,7 +867,7 @@ dict_copy_insert_all_(Dict * restrict dest,
     const size_t  n   = dict_capacity(dict);
 
     for (size_t j, k=n, i=0; i < n; i+=_N_GROUP) // TODO: align(n)
-        for (mask_t m = cmp_full(load_group(grp + i)); m; m &= m - 1)
+        for (mask_t m = load_cmp_full(grp+i); m; m &= m - 1)
         {
             j = i + mbsr(m);
             const khpair_t kh = _Dict_keys(dict)[j];

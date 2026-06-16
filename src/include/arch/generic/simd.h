@@ -36,18 +36,18 @@
 #    // _mm_movemask
 #    define mm_movemask(v)       mm_zmovemask(mm_xor(~mm_and(x, HI_), B7_))
 
-#    define mm_mask(v, m)        mm_zmovemask(mm_xor(v, m))
+#    define mm_cmp(v, m)         mm_zmovemask(mm_xor(v, m))
 
 #    if defined(MM_NULL) && (0xff == MM_NULL)
-#        define mm_mask_null(v, ...)  mm_and(mm_and(v, (v) >> 7), HI_)
+#        define mm_cmp_null(v, ...)   mm_and(mm_and(v, (v) >> 7), HI_)
 #        define mm_null_fast(v, ...)  mm_mask_null(v)
-#        define mm_mask_del(v,  ...)  mm_and(v, HI_)
+#        define mm_cmp_del(v,   ...)  mm_and(v, HI_)
 #    else
-#        define mm_mask_null(v, ...)  mm_mask(v, 0ULL)
+#        define mm_cmp_null(v, ...)   mm_mask(v, 0ULL)
 #        define mm_null_fast(v, ...)  mm_zmovemask_fast(v)
-#        define mm_mask_del(v,  ...)  mm_mask(mm_and(v, B7_), 0ULL)
+#        define mm_cmp_del(v,  ...)   mm_mask(mm_and(v, B7_), 0ULL)
 #    endif
-#    define mm_mask_full(v, ...) mm_and(~mm_mask_del(v), HI_)
+#    define mm_cmp_full(v, ...) mm_and(~mm_cmp_del(v), HI_)
 #endif
 #endif // MM_SIMD_FLAG
 #endif // MM_GENERIC_SIMD_H

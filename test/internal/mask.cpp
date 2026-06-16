@@ -12,13 +12,6 @@
 #include <chrono>
 #include "../../src/include/arch/neon/64/simd.h"
 
-#ifdef MM_ZERO
-#    define MM_NULL 0
-#    define MM_DEL  0x80
-#else
-#    define MM_NULL 0xff
-#    define MM_DEL  0x80
-#endif
 #define LEN 32768
 
 static inline void fill(uint8_t *b, int c, size_t n)
@@ -50,7 +43,7 @@ static void test(uint8_t *buf)
             for (size_t i = 0; i < LEN; i+=MM_NGROUP, mp++)
             {
                 uint8x8_t grp = mm_load(buf+i);
-                *mp  = mm_mask(grp, dup);
+                *mp  = mm_cmp(grp, dup);
             }
         }
 
@@ -63,7 +56,7 @@ static void test(uint8_t *buf)
             for (size_t i = 0; i < LEN; i+=MM_NGROUP, mp++)
             {
                 uint64_t grp = mm_load(buf+i);
-                *mp  = mm_mask(grp, dup);
+                *mp  = mm_cmp(grp, dup);
             }
         }
 

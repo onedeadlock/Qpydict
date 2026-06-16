@@ -22,14 +22,14 @@
 #    define mm_dup(v)      _mm256_set1_epi8(v)
 #    define mm_load(v)     _mm256_loadu_si256(v)
 
-#    define mm_set_full()  _mm256_set1_epi8(MM_FULL)
-#    define mm_set_empty() _mm256_set1_epi8(MM_NULL) //_mm_setzero_si128()
-#    define mm_mask(v, m)  _mm256_movemask_epi8(mm_eq(v, m))
+#    define mm_set_null()  _mm256_set1_epi8(MM_FULL)
+#    define mm_set_del()   _mm256_set1_epi8(MM_DEL)
+#    define mm_cmp(v, m)   _mm256_movemask_epi8(mm_eq(v, m))
 
-#    define mm_null_fast(v, z)    mm_mask(v, z)
-#    define mm_mask_null(v, z)    mm_mask(v, z)
-#    define mm_mask_del(v, m, z)  mm_mask(mm_and(v, m), z)
-#    define mm_mask_full(v, m, z) ~mm_mask_del(v, m, z)
+#    define mm_null_fast(v, z)    mm_cmp(v, z)
+#    define mm_cmp_null(v, z)     mm_cmp(v, z)
+#    define mm_cmp_del(v, m, z)   mm_cmp(mm_and(v, m), z)
+#    define mm_cmp_full(v, m, z) ~mm_cmp_del(v, m, z)
 #endif
 #endif // MM_SIMD_FLAG
 #endif // MM_AVX_H
